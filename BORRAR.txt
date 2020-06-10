@@ -1,0 +1,13 @@
+# Ahora que pienso, puede que no sea bueno que sea un Operand, porque no
+# retiene las mismas instancias en la cadena al realizar ciertas operaciones.
+# Se tiene que mantener la instancia original y borrar si se borra el objeto,
+# aunque esto último no es estrictamente necesario pero queda inconsistente
+# si se reevalúa por partes.
+
+# bang y message son, en realidad, un canal de comunicación más que un
+# valor. Son la salida de otro objeto pasado como argumento, creo que empujan.
+# Hay que pensar cómo se evaluaría una función que necesita tirar de
+# los argumentos que son objetos evaluables, y qué pasa si no están
+# inicializados o la conexión cambia.
+# filtra args y kwargs y devuelve los msgs ordenados por tipo.
+...  # if isinstance(x, self._msgs)

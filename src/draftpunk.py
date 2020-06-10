@@ -122,3 +122,26 @@ elif r < 5:
 ifbox(r < 5, bangbox(msg='lt'))  # crea un objeto ltbox que se conecta a bangbox, no tira.
 ifbox(r == 0, bangbox(msg='eq'))  # crea un objeto eqbox que se conecta a bangbox, no tira.
 ifbox(r > 10, bangbox(msg='gt'))  # crea un objeto gtbox que se conecta a bangbox, no tira.
+
+
+@patch
+def p():
+    m = message('bang')
+    a = num(123, inlet=m)
+    b = seq([1, 2, 3]) * a
+    outlet(b)
+p.bang()
+
+t1 = timer(2)
+t2 = timer(3)
+freq = seq([440 ,880], inlet=t1)  # el problema sigue siendo quién tira y el árbol.
+amp = seq([0, 1, 0], inlet=t2)
+sine(freq, amp)  # si es un nodo puede actualizar con set, si es un bind crea nodos cada bang.
+                 # pero el problema es quién tira! porque así los argumentos empujan.
+                 # Los timers/triggers actualizan los valores de los objetos,
+                 # pero tiene que haber un objeto outlet que sea la raiz del árbol
+                 # de ejecución y que tire cada vez que se actualiza un valor
+                 # en los distintos timers.
+                 # El problema es la intención de que funcione como reemplazo
+                 # de pbind y a la vez como patcher, ahí se genera la confusión
+                 # del tira y empuja.
