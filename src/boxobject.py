@@ -1,4 +1,6 @@
 
+from abc import ABC, abstractmethod
+
 from sc3.all import *  # *** BUG: No funciona si import sc3 no se inicializa.
 from sc3.base.functions import AbstractFunction
 
@@ -10,6 +12,95 @@ from sc3.base.functions import AbstractFunction
 # - Nombrar los un/bin/narops aunque sea an __str__
 # - Los valores de repetición de los patterns podrían depender de una variable
 #   de configuración que haga que sean infinitos o no (Pattern.repeat = True).
+
+# - CONTINUAR DESDE: PENSAR CÓMO TIENEN QUE FUNCIONAR LOS TRIGGERS.
+# - Pensar simplemente como lenguaje para la secuenciación en vez de Pbind.
+# - Lo importante son los triggers con diferente tempo para las variables.
+# - Los outlets pueden ser genéricos o el equivalente a los streams de eventos
+#   (pbind), esta interfaz es más bien funcional en vez de declarativa.
+# - Las synthdef, como funciones que se llama, podrían ser outlets, distintos
+#   tipos de outlets podrían generar distintos timpos de streams de eventos
+#   que creen o no synths, como reemplazo de pbind/pmono/artic.
+# - Tal vez mejor no hacer mensajes, descartar la idea de las cajas es adoptar
+#   el paradigma más funcional.
+
+
+# Para triggers:
+class TimeFunction(ABC):
+    @abstractmethod
+    def _iter_value(self):
+        pass
+
+    @abstractmethod
+    def _iter_map(self):
+        pass
+
+    def __iter__(self):
+        if isinstance(self.pattern, TimeFunction):
+            return self._iter_map
+        else:
+            return self._iter_value
+
+    def __len__(self):
+        return len(self.pattern)
+
+
+class Within(TimeFunction):
+    def __init__(self, time, pattern):
+        self.unit = time
+        self.delta = time / len(pattern)
+        self.pattern = pattern
+
+    def _iter_value(self):
+        for value in self.pattern:
+            yield (self.delta, value)
+
+    def _iter_map(self):
+        # within comprime o expande temporalmente la salida de every.
+        # n every d within t (cambia la proporción, nada más, pero
+        # no era eso lo que pensé primero).
+        for i in iter(self.pattern):
+            scale = self.unit / self.pattern.unit
+            yield (i[0] * scale, i[1])
+
+
+class Every(TimeFunction):
+    def __init__(self, time, pattern):
+        self.unit = time * len(pattern)
+        self.delta = time
+        self.pattern = pattern
+
+    def _iter_value(self):
+        for value in self.pattern:
+            yield (self.delta, value)
+
+    def _iter_map(self):
+        # every es resampleo/decimación de la salida de within,
+        # son algoritmos de resampling para arriba o abajo pero lazy.
+        # n within t every d.
+        new_delta = self.delta
+        new_count = 0
+        old_count = 0
+        for i in iter(self.pattern):
+            old_delta = i[0]
+            if new_count >= old_count + old_delta:
+                old_count += old_delta
+                continue
+            if old_delta <= new_delta:
+                yield (new_delta, i[1])
+                new_count += new_delta
+                old_count += old_delta
+            else:
+                old_count += old_delta
+                while new_count < old_count\
+                and new_count < self.pattern.unit - new_delta:
+                    yield (new_delta, i[1])
+                    new_count += new_delta
+
+# print( list(Within(1, range(3))) )
+# print( list(Every(0.1, range(3))) )
+# print( list(Every(0.1, Within(1, range(3)))) )
+# print( list(Within(4, Every(0.5, range(3)))) )
 
 
 class BoxObject():
