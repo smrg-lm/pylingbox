@@ -145,3 +145,22 @@ sine(freq, amp)  # si es un nodo puede actualizar con set, si es un bind crea no
                  # El problema es la intención de que funcione como reemplazo
                  # de pbind y a la vez como patcher, ahí se genera la confusión
                  # del tira y empuja.
+
+
+freq = seq([1, 2, 3], within=1)
+amp = seq([0.1, 0.5], within=1, every=0.1)
+outlet(freq, amp)  # no se necesita par, todo es paralelo por defecto.
+
+notes = seq([1, 2, 3], within=1)
+notes = every(0.1, notes)  # si within no fuera múltiplo de every el último beat queda más corto si no alarga la duración...
+notes = within(2, notes)  # simplemente expande, la secuencia es finita aunque repita, es la referencia.
+value = noise(lo=0.0, hi=1.0, every=0.1)  # si solo se pone within tiene que agregar every por defecto, every tiene sentido para los stream infinitos. Pero puede tener repeats/n además de ser infinito por defecto.
+value = within(value, 1)  # ya teniendo every within tiene sentido.
+value = repeat(value, 3)
+value = concat(value, seq, value, seq)
+part = within(7.2, value)
+piece = track((0, notes), (1.8, part), (0.7, notes))  # es un conjunto, start+dur, tiempo absoluto.
+# se puede llamar time, timeline, track.
+# la complejidad se abstraen en las funciones @patch, usa los mismos principios de la programación,
+# porque las funciones @patch pueden devolver distintos tipos de objetos (listas, conjuntos, etc.)
+# y no solo realizar acciones de ejecución. Así todo se puede componer.
