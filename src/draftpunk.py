@@ -164,3 +164,5 @@ piece = track((0, notes), (1.8, part), (0.7, notes))  # es un conjunto, start+du
 # la complejidad se abstraen en las funciones @patch, usa los mismos principios de la programación,
 # porque las funciones @patch pueden devolver distintos tipos de objetos (listas, conjuntos, etc.)
 # y no solo realizar acciones de ejecución. Así todo se puede componer.
+
+suma = seq([1, 2, 3], within=1) + seq([1, 2, 3], within=2)  # ?

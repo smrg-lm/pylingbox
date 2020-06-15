@@ -11,3 +11,13 @@
 # inicializados o la conexión cambia.
 # filtra args y kwargs y devuelve los msgs ordenados por tipo.
 ...  # if isinstance(x, self._msgs)
+
+# No olvidar, parte de la idea es que lo que se programa queda como grafo fijo,
+# los objetos son los mismos que luego se pueden acceder individualmente, eso
+# no se lleva bien y confunde con la dinámica del proxy que reevalúa todo.
+
+class symbol(): ...  # se pueden interpretar como nombres de métodos, es escriben dentro de mensajes, pd tiene @property (el arroba+el símbolo y los parámetros).
+class numdata(): ...  # int, float, etc.
+class listdata(): ...
+class signal(): ...
+class struct(): ...

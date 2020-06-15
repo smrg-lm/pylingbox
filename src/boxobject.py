@@ -8,7 +8,6 @@ from sc3.base.functions import AbstractFunction
 # https://stackoverflow.com/questions/26927571/multiple-inheritance-in-python3-with-different-signatures
 # https://stackoverflow.com/questions/45581901/are-sets-ordered-like-dicts-in-python3-6
 
-# - Reemplazar call por next
 # - Nombrar los un/bin/narops aunque sea an __str__
 # - Los valores de repetición de los patterns podrían depender de una variable
 #   de configuración que haga que sean infinitos o no (Pattern.repeat = True).
@@ -37,9 +36,9 @@ class TimeFunction(ABC):
 
     def __iter__(self):
         if isinstance(self.pattern, TimeFunction):
-            return self._iter_map
+            return self._iter_map()
         else:
-            return self._iter_value
+            return self._iter_value()
 
     def __len__(self):
         return len(self.pattern)
@@ -97,10 +96,12 @@ class Every(TimeFunction):
                     yield (new_delta, i[1])
                     new_count += new_delta
 
-# print( list(Within(1, range(3))) )
-# print( list(Every(0.1, range(3))) )
-# print( list(Every(0.1, Within(1, range(3)))) )
-# print( list(Within(4, Every(0.5, range(3)))) )
+'''
+print( list(Within(1, range(3))) )
+print( list(Every(0.1, range(3))) )
+print( list(Every(0.1, Within(1, range(3)))) )
+print( list(Within(4, Every(0.5, range(3)))) )
+'''
 
 
 class BoxObject():
@@ -110,9 +111,9 @@ class BoxObject():
         self.__cache = self.__NOCACHE
         self.__roots = []
         self.__outlets = []
+        self.__triggers = []
 
-    # *** EN VEZ DE CALLABLES PUEDEN SER ITERABLES... Y SE LLAMA CON next. SI SE CONSIDERAN COMO PATTERNS...
-    def __call__(self):
+    def __next__(self):
         return None
 
     @property
@@ -169,48 +170,32 @@ class BoxObject():
         return ret
 
 
-class Patch():
+class Patch():  # si distintos patch llaman tiran del árbol por medio de los outlets
     current_patch = None
 
     def __init__(self):
-        self.tree = None  # *** puede haber más de un árbol independiente?
-        # bangs es un mensage, no existe como objeto.
-        # message queda fuera de tree (empuja)...
-        self.messages = None
-        self._previous_patch = None
-        self._open = False
+        # self.tree = None  # *** puede haber más de un árbol independiente?
+        self._outlets = []
+        self._triggers = []
 
-    def begin(self):  # *** ver casos begin/end es para build o edit (tienen tree, bangs o messages).
-        if self._open:
-            raise Exception('patch already open')
-        self._open = True
-        self._previous_patch = self.current_patch
-        type(self).current_patch = self
+    def _build(self):
+        # Que los outlets y los triggers tengan fuente y destino.
+        ...
 
-    def end(self):
-        if not self._open:
-            raise Exception('patch is not open')
-        if type(self).current_patch is not self:
-            raise Exception('patch is not current_patch')
-        self._open = False
-        type(self).current_patch = self._previous_patch
+    def play(self):
+        # Evaluación ordenada de los triggers y los outlets.
+        ...
 
 
-# HAY QUE HACER LA LÓGICA DEL OUTLET PARA QUE FUNCIONE EL PATCH Y EL ÁRBOL (TIRAR Y EMPUJAR).
-# PUEDE HABER DISTINTOS TIPOS DE OBJETOS QUE SEAN OUTLET, TIENE QUE HABER UA RAÍZ.
-# *** UNA POSIBILIDAD ES QUE LOS MENSAJES SOLO ACTUALICEN EL ESTADO DE LOS OBJETOS ***
-# *** LUEGO NO HAY BANGS COMO EN PD/MAX, HAY UN OUTLET QUE TIRA EL ESTADO DE LA CADENA ***
-# *** POSIBILIDAD: EL OUTLET (LA RAÍZ DEL ÁRBOL DE EJECUCIÓN) SE EVALÚA CADA VEZ
-# *** QUE ALGÚN NODO CAMBIA DE ESTADO (!), POR MENSAJE O POR TRIGGER, ESO ES ***
-# *** SIMILAR A LA LÓGICA DE LOS PROXIES COMO ESTRUCTURAS QUE SE ACTUALIZAN, ***
-# *** ES EL GRAFO QUE SE ACTUALIZA Y ES COMO SI FUERA UNA LLAMADA ***
-# *** (luego pueden haber llamadas que actualicen y no activen el outlet, eso sería la relación bang/set) ***
-# No olvidar, parte de la idea es que lo que se programa queda como grafo fijo,
-# los objetos son los mismos que luego se pueden acceder individualmente, eso
-# no se lleva bien y confunde con la dinámica del proxy que reevalúa todo.
-# COMENTARIO VIEJO
-#     # +++ EL PROBLEMA PRINCIPAL VA A SER LA ACTUALIZACIÓN DE OUTLET QUE TIENE
-#     # +++ QUE SER DESPUÉS DE LOS TRIGGERS QUE HAYAN A CADA CILCO POR UNIDAD TEMPORAL.
+def patch(func):
+    p = Patch()
+    Patch.current_patch = p
+    func()
+    Patch.current_patch = None
+    p._build()
+    return p
+
+
 class Outlet(BoxObject):
     def __init__(self, graph):
         super().__init__()
@@ -220,18 +205,19 @@ class Outlet(BoxObject):
         else:
             raise ValueError(
                 f"'{type(graph).__class__}' is not a valid graph object")
+        # Patch.current_patch._outlets.append(self)
 
-    def __call__(self):
-        return self.graph()
+    def __next__(self):
+        return next(self.graph)
 
 
 class Inlet(BoxObject):
     def __init__(self, value):
         self._value = value
 
-    def __call__(self):
+    def __next__(self):
         if isinstance(self._value, BoxObject):
-            return self._value()
+            return next(self._value)
         else:
             return self._value
 
@@ -248,17 +234,10 @@ class Message(BoxObject):
         self._remove_root(target)
 
 
-class symbol(): ...  # se pueden interpretar como nombres de métodos, es escriben dentro de mensajes, pd tiene @property (el arroba+el símbolo y los parámetros).
-class numdata(): ...  # int, float, etc.
-class listdata(): ...
-class signal(): ...
-class struct(): ...
-
-
 class AbstractBox(BoxObject, AbstractFunction):
-    def __call__(self):
+    def __next__(self):
         raise NotImplementedError(
-            f'callable interface not defined for {type(self).__name__}')
+            f'generator interface not defined for {type(self).__name__}')
 
     def _compose_unop(self, selector):
         return UnaryOpBox(selector, self)
@@ -278,11 +257,14 @@ class UnaryOpBox(AbstractBox):
         super().__init__()
         self.selector = selector
         self.a = a
-        if isinstance(self.a, BoxObject):
-            self.a._add_root(self)
+        self.a._add_root(self)
+        # if isinstance(self.a, BoxObject):
+        #     self.a._add_root(self)
 
-    def __call__(self):
-        return self.selector(self.a())
+    def __next__(self):
+        # a = next(self.a) if isinstance(self.a, BoxObject) else self.a
+        # return self.selector(a)
+        return self.selector(next(self.a))
 
 
 class BinaryOpBox(AbstractBox):
@@ -291,21 +273,14 @@ class BinaryOpBox(AbstractBox):
         self.selector = selector
         self.a = a
         self.b = b
-        if isinstance(self.a, BoxObject):
-            self.a._add_root(self)
-        if isinstance(self.b, BoxObject):
-            self.b._add_root(self)
+        for obj in a, b:
+            if isinstance(obj, BoxObject):
+                obj._add_root(self)
 
-    def __call__(self):
+    def __next__(self):
         # se necesita algún tipo de función as_boxobject.
-        if isinstance(self.a, BoxObject):
-            a = self.a()
-        else:
-            a = self.a
-        if isinstance(self.b, BoxObject):
-            b = self.b()
-        else:
-            b = self.b
+        a = next(self.a) if isinstance(self.a, BoxObject) else self.a
+        b = next(self.b) if isinstance(self.b, BoxObject) else self.b
         return self.selector(a, b)
 
 
@@ -315,15 +290,17 @@ class NAryOpBox(AbstractBox):
         self.selector = selector
         self.a = a
         self.args = args
-        if isinstance(self.a, BoxObject):
-            self.a._add_root(self)
-        for x in self.args:
-            if isinstance(x, BoxObject):
-                x._add_root(self)
+        # for obj in (a, *args):
+        for obj in args:
+            if isinstance(obj, BoxObject):
+                obj._add_root(self)
 
-    def __call__(self):
-        args = [x() if isinstance(x, BoxObject) else x for x in self.args]
-        return self.selector(self.a(), *args)
+    def __next__(self):
+        # a = next(self.a) if isinstance(self.a, BoxObject) else self.a
+        args = [next(obj) if isinstance(obj, BoxObject)\
+                else obj for obj in self.args]
+        # return self.selector(a, *args)
+        return self.selector(next(self.a), *args)
 
 
 class IfBox(AbstractBox):
@@ -332,7 +309,7 @@ class IfBox(AbstractBox):
         self.cond = cond
         self._check_branches(true, false)
         self.branches = (true, false)
-        for x in (self.cond, *self.branches):
+        for x in cond, true, false:
             if isinstance(x, BoxObject):
                 x._add_root(self)
 
@@ -341,11 +318,11 @@ class IfBox(AbstractBox):
             if isinstance(b, Outlet) or hasattr(b, '_outlets') and b._outlets:
                 raise ValueError("true/false expressions can't contain outlets")
 
-    def __call__(self):
-        cond = self.cond() if isinstance(self.cond, BoxObject) else self.cond
+    def __next__(self):
+        cond = next(self.cond) if isinstance(self.cond, BoxObject) else self.cond
         cond = int(not cond)
         if isinstance(self.branches[cond], BoxObject):
-            return self.branches[cond]()
+            return next(self.branches[cond])
         else:
             return self.branches[cond]
         # Acá está el quid de la cuestión, qué hace cuando no hace nada,
@@ -380,7 +357,7 @@ class ValueBox(AbstractBox):
         super().__init__()
         self._value = value
 
-    def __call__(self):
+    def __next__(self):
         return self._value
 
 
@@ -389,13 +366,37 @@ class FunctionBox(AbstractBox):
         super().__init__()
         self.args = args
         self.kwargs = kwargs
-        for x in self.args + tuple(self.kwargs.values()):
-            if isinstance(x, BoxObject):
-                x._add_root(self)
+        for obj in (*args, *kwargs.values()):
+            if isinstance(obj, BoxObject):
+                obj._add_root(self)
 
-    def __call__(self):
-        args = [x() if isinstance(x, BoxObject) else x for x in self.args]
+    def __next__(self):
+        args = [next(x) if isinstance(x, BoxObject) else x for x in self.args]
         kwargs = {
-            k: (v() if isinstance(x, BoxObject) else v)\
+            k: (next(v) if isinstance(x, BoxObject) else v)\
             for k, v in self.kwargs.items()}
         return (*args, kwargs)
+
+'''
+a = ValueBox(1)
+b = ValueBox(2)
+c = a + b
+o = Outlet(c)
+next(o)
+'''
+
+'''
+for obj in a, b, c, o:
+    print(hex(id(obj)), obj._outlets, obj._roots)
+'''
+
+'''
+a = ValueBox(1)
+b = ValueBox(0)
+c = a + b
+i = IfBox(c > 2, ValueBox(True), ValueBox(False))
+o = Outlet(i)
+print(next(o))
+b._value = 2
+print(next(o))
+'''
