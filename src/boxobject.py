@@ -25,7 +25,7 @@ from sc3.base.functions import AbstractFunction
 
 
 # Para triggers:
-class TimeFunction(ABC):
+class TriggerFunction(ABC):
     @abstractmethod
     def _iter_value(self):
         pass
@@ -35,7 +35,7 @@ class TimeFunction(ABC):
         pass
 
     def __iter__(self):
-        if isinstance(self.pattern, TimeFunction):
+        if isinstance(self.pattern, TriggerFunction):
             return self._iter_map()
         else:
             return self._iter_value()
@@ -44,7 +44,7 @@ class TimeFunction(ABC):
         return len(self.pattern)
 
 
-class Within(TimeFunction):
+class Within(TriggerFunction):
     def __init__(self, time, pattern):
         self.unit = time
         self.delta = time / len(pattern)
@@ -63,7 +63,7 @@ class Within(TimeFunction):
             yield (i[0] * scale, i[1])
 
 
-class Every(TimeFunction):
+class Every(TriggerFunction):
     def __init__(self, time, pattern):
         self.unit = time * len(pattern)
         self.delta = time
@@ -114,7 +114,10 @@ class BoxObject():
         self.__triggers = []
 
     def __next__(self):
-        return None
+        raise NotImplementedError(f'{type(self).__name__}.__next__')
+
+    def __call__(self):
+        raise NotImplementedError(f'{type(self).__name__}.__call__')
 
     @property
     def _cache(self):
@@ -133,6 +136,10 @@ class BoxObject():
         for r in self.__roots:
             r._clear_cache()
 
+    @property
+    def _roots(self):
+        return self.__roots
+
     def _add_root(self, value):
         if not value in self.__roots:
             self.__roots.append(value)
@@ -140,18 +147,6 @@ class BoxObject():
     def _remove_root(self, value):
         if value in self.__roots:
             self.__roots.remove(value)
-
-    @property
-    def _roots(self):
-        return self.__roots
-
-    def _add_outlet(self, value):
-        if not value in self.__outlets:
-            self.__outlets.append(value)
-
-    def _remove_outlet(self, value):
-        if value in self.__outlets:
-            self.__outlets.remove(value)
 
     @property
     def _outlets(self):
@@ -168,6 +163,26 @@ class BoxObject():
             if not o in ret:
                 ret.append(o)
         return ret
+
+    def _add_outlet(self, value):
+        if not value in self.__outlets:
+            self.__outlets.append(value)
+
+    def _remove_outlet(self, value):
+        if value in self.__outlets:
+            self.__outlets.remove(value)
+
+    @property
+    def _triggers(self):
+        return self.__triggers
+
+    def _add_trigger(self, value):
+        if not value in self.__triggers:
+            self.__triggers.append(value)
+
+    def _remove_trigger(self, value):
+        if value in self.__triggers:
+            self.__triggers.remove(value)
 
 
 class Patch():  # si distintos patch llaman tiran del árbol por medio de los outlets
@@ -235,10 +250,6 @@ class Message(BoxObject):
 
 
 class AbstractBox(BoxObject, AbstractFunction):
-    def __next__(self):
-        raise NotImplementedError(
-            f'generator interface not defined for {type(self).__name__}')
-
     def _compose_unop(self, selector):
         return UnaryOpBox(selector, self)
 
@@ -359,6 +370,29 @@ class ValueBox(AbstractBox):
 
     def __next__(self):
         return self._value
+
+
+class SeqBox(AbstractBox):
+    def __init__(self, lst):
+        super().__init__()
+        self._lst = lst
+        self._iterator = iter(lst)
+
+    def __next__(self):
+        return next(self._iterator)
+
+'''
+# Grafo de iteradores (__next__). Es UNA de las dos opciones, sin triggers.
+a = SeqBox([1, 2, 3])
+b = ValueBox(0)
+c = a + b
+i = IfBox(c > 2, ValueBox(True), ValueBox(False))
+o = Outlet(i)
+print(next(o))
+print(next(o))
+print(next(o))
+# print(next(o))  # StopIteration
+'''
 
 
 class FunctionBox(AbstractBox):
