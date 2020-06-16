@@ -13,7 +13,7 @@ from sc3.base.functions import AbstractFunction
 # - Los valores de repetición de los patterns podrían depender de una variable
 #   de configuración que haga que sean infinitos o no (Pattern.repeat = True).
 
-# - CONTINUAR DESDE: PENSAR CÓMO TIENEN QUE FUNCIONAR LOS TRIGGERS.
+# - CONTINUAR DESDE: Within/Every COMO PROPIEDADES DE BOXOBJECT.
 # - Pensar simplemente como lenguaje para la secuenciación en vez de Pbind.
 # - Lo importante son los triggers con diferente tempo para las variables.
 # - Los outlets pueden ser genéricos o el equivalente a los streams de eventos
@@ -28,73 +28,65 @@ from sc3.base.functions import AbstractFunction
 # Para triggers:
 class TriggerFunction(ABC):
     @abstractmethod
-    def _iter_value(self):
-        pass
-
-    @abstractmethod
     def _iter_map(self):
         pass
 
+    def _iter_value(self):
+        while True:  # *** BoxObject lo tiene que interrumpir.
+            self._obj._clear_cache()
+            yield self._delta
+
     def __iter__(self):
-        if isinstance(self.pattern, TriggerFunction):
+        if isinstance(self._obj, TriggerFunction):
             return self._iter_map()
         else:
             return self._iter_value()
 
     def __len__(self):
-        return len(self.pattern)
+        return len(self._obj)
 
 
 class Within(TriggerFunction):
-    def __init__(self, time, pattern):
-        self.unit = time
-        self.delta = time / len(pattern)
-        self.pattern = pattern
-
-    def _iter_value(self):
-        for value in self.pattern:
-            yield (self.delta, value)
+    def __init__(self, time, obj):
+        self._unit = time
+        self._delta = time / len(obj)
+        self._obj = obj
 
     def _iter_map(self):
-        # within comprime o expande temporalmente la salida de every.
-        # n every d within t (cambia la proporción, nada más, pero
-        # no era eso lo que pensé primero).
-        for i in iter(self.pattern):
-            scale = self.unit / self.pattern.unit
-            yield (i[0] * scale, i[1])
+        # Within comprime o expande temporalmente la salida de every.
+        # n every d within t (cambia la proporción, nada más). Es recursiva.
+        for delta in iter(self._obj):
+            scale = self._unit / self._obj._unit
+            yield delta * scale
 
 
 class Every(TriggerFunction):
-    def __init__(self, time, pattern):
-        self.unit = time * len(pattern)
-        self.delta = time
-        self.pattern = pattern
-
-    def _iter_value(self):
-        for value in self.pattern:
-            yield (self.delta, value)
+    def __init__(self, time, obj):
+        self._unit = time * len(obj)
+        self._delta = time
+        self._obj = obj
 
     def _iter_map(self):
         # every es resampleo/decimación de la salida de within,
         # son algoritmos de resampling para arriba o abajo pero lazy.
         # n within t every d.
-        new_delta = self.delta
+        new_delta = self._delta
         new_count = 0
         old_count = 0
-        for i in iter(self.pattern):
-            old_delta = i[0]
+        for delta in iter(self._obj):
+            old_delta = delta
             if new_count >= old_count + old_delta:
                 old_count += old_delta
                 continue
             if old_delta <= new_delta:
-                yield (new_delta, i[1])
+                yield new_delta
                 new_count += new_delta
                 old_count += old_delta
             else:
                 old_count += old_delta
                 while new_count < old_count\
-                and new_count < self.pattern.unit - new_delta:
-                    yield (new_delta, i[1])
+                and new_count < self._obj._unit - new_delta:
+                    yield new_delta
                     new_count += new_delta
 
 '''
