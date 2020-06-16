@@ -25,75 +25,98 @@ from sc3.base.functions import AbstractFunction
 #   el paradigma más funcional.
 
 
-# Para triggers:
-class TriggerFunction(ABC):
-    @abstractmethod
-    def _iter_map(self):
-        pass
+# # Para triggers:
+# class TriggerFunction(ABC):
+#     @abstractmethod
+#     def _iter_map(self):
+#         pass
+#
+#     def _iter_value(self):
+#         while True:  # *** BoxObject lo tiene que interrumpir.
+#             self._obj._clear_cache()
+#             yield self._delta
+#
+#     def __iter__(self):
+#         if isinstance(self._obj, TriggerFunction):
+#             return self._iter_map()
+#         else:
+#             return self._iter_value()
+#
+#     def __len__(self):
+#         return len(self._obj)
+#
+#
+# class Within(TriggerFunction):
+#     def __init__(self, time, obj):
+#         self._unit = time
+#         self._delta = time / len(obj)  # *** FALTA EL CASO EVERY.
+#         self._obj = obj
+#
+#     def _iter_map(self):
+#         # Within comprime o expande temporalmente la salida de every.
+#         # n every d within t (cambia la proporción, nada más). Es recursiva.
+#         for delta in iter(self._obj):
+#             scale = self._unit / self._obj._unit
+#             print(delta, scale, self._unit, self._obj._unit)
+#             yield delta * scale
+#
+#
+# class Every(TriggerFunction):
+#     def __init__(self, time, obj):
+#         self._unit = time * len(obj)  # *** FALTA EL CASO WITHIN.
+#         self._delta = time
+#         self._obj = obj
+#
+#     def _iter_map(self):
+#         # every es resampleo/decimación de la salida de within,
+#         # son algoritmos de resampling para arriba o abajo pero lazy.
+#         # n within t every d.
+#         new_delta = self._delta
+#         new_count = 0
+#         old_count = 0
+#         for delta in iter(self._obj):
+#             old_delta = delta
+#             if new_count >= old_count + old_delta:
+#                 old_count += old_delta
+#                 continue
+#             if old_delta <= new_delta:
+#                 yield new_delta
+#                 new_count += new_delta
+#                 old_count += old_delta
+#             else:
+#                 old_count += old_delta
+#                 while new_count < old_count\
+#                 and new_count < self._obj._unit - new_delta:
+#                     yield new_delta
+#                     new_count += new_delta
+#
+# '''
+# s = SeqBox([1, 2, 3])
+# x = Within(1, s)
+# x = Every(0.1, x)
+# # x = Within(3, x)  # llama, pero no está bien el tiempo
+# x = iter(x)
+# print(next(x), s())
+# # se cuelga en el último por el continue de iter_map (caso 1 w y 1 e).
+# '''
 
-    def _iter_value(self):
+
+class Trigger():
+    def __init__(self, delta, obj):
+        self._delta = delta
+        self._obj = obj
+
+    def __iter__(self):
         while True:  # *** BoxObject lo tiene que interrumpir.
             self._obj._clear_cache()
             yield self._delta
 
-    def __iter__(self):
-        if isinstance(self._obj, TriggerFunction):
-            return self._iter_map()
-        else:
-            return self._iter_value()
-
-    def __len__(self):
-        return len(self._obj)
-
-
-class Within(TriggerFunction):
-    def __init__(self, time, obj):
-        self._unit = time
-        self._delta = time / len(obj)
-        self._obj = obj
-
-    def _iter_map(self):
-        # Within comprime o expande temporalmente la salida de every.
-        # n every d within t (cambia la proporción, nada más). Es recursiva.
-        for delta in iter(self._obj):
-            scale = self._unit / self._obj._unit
-            yield delta * scale
-
-
-class Every(TriggerFunction):
-    def __init__(self, time, obj):
-        self._unit = time * len(obj)
-        self._delta = time
-        self._obj = obj
-
-    def _iter_map(self):
-        # every es resampleo/decimación de la salida de within,
-        # son algoritmos de resampling para arriba o abajo pero lazy.
-        # n within t every d.
-        new_delta = self._delta
-        new_count = 0
-        old_count = 0
-        for delta in iter(self._obj):
-            old_delta = delta
-            if new_count >= old_count + old_delta:
-                old_count += old_delta
-                continue
-            if old_delta <= new_delta:
-                yield new_delta
-                new_count += new_delta
-                old_count += old_delta
-            else:
-                old_count += old_delta
-                while new_count < old_count\
-                and new_count < self._obj._unit - new_delta:
-                    yield new_delta
-                    new_count += new_delta
 
 '''
-print( list(Within(1, range(3))) )
-print( list(Every(0.1, range(3))) )
-print( list(Every(0.1, Within(1, range(3)))) )
-print( list(Within(4, Every(0.5, range(3)))) )
+s = SeqBox([1, 2, 3])
+x = Trigger(1, s)
+x = iter(x)
+print(next(x), s())
 '''
 
 
@@ -392,6 +415,7 @@ class SeqBox(AbstractBox):
     def __init__(self, lst):
         super().__init__()
         self._lst = lst
+        self._len = len(lst)
         self._iterator = iter(lst)
 
     def __iter__(self):
@@ -399,6 +423,9 @@ class SeqBox(AbstractBox):
 
     def __next__(self):
         return next(self._iterator)
+
+    def __len__(self):
+        return self._len
 
 '''
 # Grafo de iteradores con call/cache.
