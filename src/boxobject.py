@@ -117,8 +117,15 @@ class BoxObject():
     def __iter__(self):
         raise NotImplementedError(f'{type(self).__name__}.__iter__')
 
+    def __next__(self):
+        raise NotImplementedError(f'{type(self).__name__}.__next__')
+
     def __call__(self):
-        raise NotImplementedError(f'{type(self).__name__}.__call__')
+        if self._cached:
+            return self._cache
+        else:
+            ret = self._cache = next(self)
+            return ret
 
     @property
     def _cache(self):
@@ -135,7 +142,8 @@ class BoxObject():
     def _clear_cache(self):
         self.__cache = self.__NOCACHE
         for r in self.__roots:
-            r._clear_cache()
+            if r._cached:
+                r._clear_cache()
 
     @property
     def _roots(self):
@@ -216,6 +224,8 @@ class Outlet(BoxObject):
     def __init__(self, graph):
         super().__init__()
         self.graph = graph
+        # *** SI NO SE AGREGA COMO ROOT NO ACTÚA CLEAR_CACHE, DEBERÍA HACERLA A PARTE PARA LAS OUTLETS O AGREGARLSA COMO ROOT?
+        # *** EL PROBLEMA VA A SER CUANDO HAYAN GRAFOS ANIDADOS.
         if not isinstance(graph, Outlet) and isinstance(self.graph, BoxObject):
             self.graph._add_outlet(self)  # *** ¿Este método debería ser solo de Outlet? Es quién llama, el único que puede saber?
         else:
@@ -225,6 +235,9 @@ class Outlet(BoxObject):
 
     def __iter__(self):
         yield from self.graph
+
+    def __next__(self):
+        return self.graph()
 
 
 class Inlet(BoxObject):
@@ -237,6 +250,12 @@ class Inlet(BoxObject):
         else:
             while True:
                 yield self._value
+
+    def __next__(self):
+        if isinstance(self._value, BoxObject):
+            return next(self._value)
+        else:
+            return self._value
 
 
 class Message(BoxObject):
@@ -276,6 +295,9 @@ class UnaryOpBox(AbstractBox):
         for value in self.a:
             yield self.selector(value)
 
+    def __next__(self):
+        return self.selector(next(self.a))
+
 
 class BinaryOpBox(AbstractBox):
     def __init__(self, selector, a, b):
@@ -293,6 +315,11 @@ class BinaryOpBox(AbstractBox):
         for a, b in zip(ia, ib):
             yield self.selector(a, b)
 
+    def __next__(self):
+        a = self.a() if isinstance(self.a, BoxObject) else self.a
+        b = self.b() if isinstance(self.b, BoxObject) else self.b
+        return self.selector(a, b)
+
 
 class NAryOpBox(AbstractBox):
     def __init__(self, selector, a, *args):
@@ -309,6 +336,11 @@ class NAryOpBox(AbstractBox):
                 else repeat(obj) for obj in self.args]
         for a, *args in zip(self.a, *args):
             yield self.selector(a, *args)
+
+    def __next__(self):
+        args = [next(obj) if isinstance(obj, BoxObject)\
+                else obj for obj in self.args]
+        return self.selector(next(self.a), *args)
 
 
 class IfBox(AbstractBox):
@@ -341,6 +373,15 @@ class IfBox(AbstractBox):
             else:
                 yield from false
 
+    def __next__(self):
+        cond = next(self.cond) if isinstance(self.cond, BoxObject)\
+               else self.cond
+        cond = int(not cond)
+        if isinstance(self.branches[cond], BoxObject):
+            return next(self.branches[cond])
+        else:
+            return self.branches[cond]
+
 
 class ValueBox(AbstractBox):
     def __init__(self, value):
@@ -351,6 +392,9 @@ class ValueBox(AbstractBox):
         while True:
             yield self._value
 
+    def __next__(self):
+        return self._value
+
 
 class SeqBox(AbstractBox):
     def __init__(self, lst):
@@ -360,6 +404,30 @@ class SeqBox(AbstractBox):
 
     def __iter__(self):
         yield from self._lst
+
+    def __next__(self):
+        return next(self._iterator)
+
+'''
+# Grafo de iteradores con call/cache.
+a = SeqBox([1, 2, 3])
+b = ValueBox(0)
+c = a + b
+o = Outlet(c)
+print(next(o))
+print(next(o))
+c._clear_cache()  # no reevalúa a y b
+print(next(o))
+print(next(o))
+b._clear_cache()  # no reevalúa a
+print(next(o))
+a._clear_cache()  # no reevalúa b
+print(next(o))
+a._clear_cache()
+print(next(o))
+# ...
+# StopIteration
+'''
 
 '''
 # Grafo de iterables (__iter__). Es UNA de las dos opciones, sin triggers.
@@ -392,8 +460,15 @@ class FunctionBox(AbstractBox):
                 for obj in self.args]
         kwargs = {
             key: value if isinstance(value, BoxObject) else repeat(value)\
-            for key, value in self.kwargs.items()}
+                 for key, value in self.kwargs.items()}
         ...  # ?
+
+    def __next__(self):
+        args = [next(x) if isinstance(x, BoxObject) else x for x in self.args]
+        kwargs = {
+            key: next(value) if isinstance(value, BoxObject) else value\
+                 for key, value in self.kwargs.items()}
+        return self.func(*args, **kwargs)
 
 '''
 a = ValueBox(1)
