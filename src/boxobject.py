@@ -255,10 +255,11 @@ class Trigger():
     def __init__(self, delta):
         self._delta = delta
         self._objs = []
+        self._active = True
 
     def __iter__(self):
         while True:
-            if len(self._objs) == 0:
+            if not self._active:
                 return
             for obj in self._objs:
                 obj._clear_cache()
@@ -297,6 +298,7 @@ class Outlet(BoxObject):
         self._add_branch(graph)
         self._patch = Patch.current_patch
         self._patch._outlets.append(self)
+        self._active = True
 
     def __iter__(self):
         yield from self._graph
@@ -305,11 +307,15 @@ class Outlet(BoxObject):
         try:
             return self._graph()
         except StopIteration:
+            self._active = False
             for obj in self._get_triggered_objects():
-                for trigger in obj._triggers:
-                    trigger.disconnect(obj)
+                if not any(o._active for o in obj._outlets):  # No active outlet for this obj.
+                    for trigger in obj._triggers:
+                        if not any(
+                        o._active for tobj in trigger._objs\
+                        for o in tobj._outlets):  # No active outlet for other trigger objs.
+                            trigger._active = False
             raise
-
 
 '''
 @patch
@@ -317,20 +323,33 @@ def test():
     a = SeqBox([1, 2, 3])
     b = ValueBox(10)
     c = ValueBox(100)
-    r = a * b + c
+    r1 = a * b
+    r2 = a * b + c
+    d = SeqBox([1, 2, 3, 4])
+    r3 = d * 1000
     x = Trigger(1)
     x.connect(a)
-    Outlet(r)
+    x.connect(d)
+    Outlet(r1)
+    Outlet(r2)
+    Outlet(r3)
 
-o = test._outlets[0]
-t = iter(o._get_triggers()[0])
+outs = test._outlets
+trig = outs[0]._get_triggers()[0]
+itrig = iter(trig)
 
 for i in range(3):
-    print(o())
-    next(t)
+    for o in outs:
+        print(o())
+    next(itrig)
 
-# o()  # StopIteration
-# next(t)  # StopIteration
+# outs[0]()  # StopIteration
+# outs[1]()  # StopIteration
+# outs[2]()  # 4000
+# trig._active  # True
+# next(itrig)  # 1
+# outs[2]()  # StopIteration
+# trig._active  # False
 '''
 
 
