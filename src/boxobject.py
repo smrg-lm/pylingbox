@@ -101,31 +101,13 @@ from sc3.base.functions import AbstractFunction
 # '''
 
 
-class Trigger():
-    def __init__(self, delta, obj):
-        self._delta = delta
-        self._obj = obj
-
-    def __iter__(self):
-        while True:  # *** BoxObject lo tiene que interrumpir.
-            self._obj._clear_cache()
-            yield self._delta
-
-
-'''
-s = SeqBox([1, 2, 3])
-x = Trigger(1, s)
-x = iter(x)
-print(next(x), s())
-'''
-
-
 class BoxObject():
     __NOCACHE = object()
 
     def __init__(self):
         self.__cache = self.__NOCACHE
         self.__roots = []
+        self.__branches = []
         self.__outlets = []
         self.__triggers = []
 
@@ -173,6 +155,18 @@ class BoxObject():
             self.__roots.remove(value)
 
     @property
+    def _branches(self):
+        return self.__branches
+
+    def _add_branch(self, value):
+        if not value in self.__branches:
+            self.__branches.append(value)
+
+    def _remove_branch(self, value):
+        if not value in self.__branches:
+            self.__branches.remove(value)
+
+    @property
     def _outlets(self):
         # Las salidas se buscan hacia la raíz.
         ret = []
@@ -208,6 +202,24 @@ class BoxObject():
         if value in self.__triggers:
             self.__triggers.remove(value)
 
+    def _get_triggers(self):
+        # Los triggers se buscan hacia las hojas.
+        ret = []
+        for branch in self.__branches:
+            ret.extend(branch._get_triggers())
+        for trigger in self.__triggers:
+            if not trigger in ret:
+                ret.append(trigger)
+        return ret
+
+    def _get_triggered_objects(self):
+        ret = []
+        for branch in self.__branches:
+            ret.extend(branch._get_triggered_objects())
+        if self.__triggers:
+            ret.append(self)
+        return ret
+
 
 class Patch():  # si distintos patch llaman tiran del árbol por medio de los outlets
     current_patch = None
@@ -215,11 +227,15 @@ class Patch():  # si distintos patch llaman tiran del árbol por medio de los ou
     def __init__(self):
         # self.tree = None  # *** puede haber más de un árbol independiente?
         self._outlets = []
-        self._triggers = []
 
     def _build(self):
-        # Que los outlets y los triggers tengan fuente y destino.
-        ...
+        # esto se podría hacer dinámico si los triggers pueden cambiar,
+        # pero es recorrer el árbol a cada tic.
+        for outlet in self._outlets:
+            triggers = []
+            triggers.extend(outlet._get_triggers())
+            print(*triggers, outlet)  # los trig están ordenados por orden de evaluación.
+            ...
 
     def play(self):
         # Evaluación ordenada de los triggers y los outlets.
@@ -235,29 +251,94 @@ def patch(func):
     return p
 
 
+class Trigger():
+    def __init__(self, delta):
+        self._delta = delta
+        self._objs = []
+
+    def __iter__(self):
+        while True:
+            if len(self._objs) == 0:
+                return
+            for obj in self._objs:
+                obj._clear_cache()
+            yield self._delta
+
+    def connect(self, obj):
+        if not obj in self._objs:
+            self._objs.append(obj)
+            obj._add_trigger(self)
+
+    def disconnect(self, obj):
+        if obj in self._objs:
+            self._objs.remove(obj)
+            obj._remove_trigger(self)
+
+
+'''
+s = SeqBox([1, 2, 3])
+x = Trigger(1)
+x.connect(s)
+x = iter(x)
+print(next(x), s())
+'''
+
+
 class Outlet(BoxObject):
     def __init__(self, graph):
         super().__init__()
-        self.graph = graph
-        # *** SI NO SE AGREGA COMO ROOT NO ACTÚA CLEAR_CACHE, DEBERÍA HACERLA A PARTE PARA LAS OUTLETS O AGREGARLSA COMO ROOT?
-        # *** EL PROBLEMA VA A SER CUANDO HAYAN GRAFOS ANIDADOS.
-        if not isinstance(graph, Outlet) and isinstance(self.graph, BoxObject):
-            self.graph._add_outlet(self)  # *** ¿Este método debería ser solo de Outlet? Es quién llama, el único que puede saber?
+        if not isinstance(graph, Outlet) and isinstance(graph, BoxObject):
+            graph._add_outlet(self)
         else:
             raise ValueError(
                 f"'{type(graph).__class__}' is not a valid graph object")
-        # Patch.current_patch._outlets.append(self)
+        self._graph = graph
+        graph._add_root(self)
+        self._add_branch(graph)
+        self._patch = Patch.current_patch
+        self._patch._outlets.append(self)
 
     def __iter__(self):
-        yield from self.graph
+        yield from self._graph
 
     def __next__(self):
-        return self.graph()
+        try:
+            return self._graph()
+        except StopIteration:
+            for obj in self._get_triggered_objects():
+                for trigger in obj._triggers:
+                    trigger.disconnect(obj)
+            raise
+
+
+'''
+@patch
+def test():
+    a = SeqBox([1, 2, 3])
+    b = ValueBox(10)
+    c = ValueBox(100)
+    r = a * b + c
+    x = Trigger(1)
+    x.connect(a)
+    Outlet(r)
+
+o = test._outlets[0]
+t = iter(o._get_triggers()[0])
+
+for i in range(3):
+    print(o())
+    next(t)
+
+# o()  # StopIteration
+# next(t)  # StopIteration
+'''
 
 
 class Inlet(BoxObject):
     def __init__(self, value):
         self._value = value
+        value._add_root(self)
+        self._add_branch(value)
 
     def __iter__(self):
         if isinstance(self._value, BoxObject):
@@ -304,7 +385,8 @@ class UnaryOpBox(AbstractBox):
         super().__init__()
         self.selector = selector
         self.a = a
-        self.a._add_root(self)
+        a._add_root(self)
+        self._add_branch(a)
 
     def __iter__(self):
         for value in self.a:
@@ -323,6 +405,7 @@ class BinaryOpBox(AbstractBox):
         for obj in a, b:
             if isinstance(obj, BoxObject):
                 obj._add_root(self)
+                self._add_branch(obj)
 
     def __iter__(self):
         ia = self.a if isinstance(self.a, BoxObject) else repeat(self.a)
@@ -342,9 +425,12 @@ class NAryOpBox(AbstractBox):
         self.selector = selector
         self.a = a
         self.args = args
+        a._add_root(self)
+        self._add_branch(a)
         for obj in args:
             if isinstance(obj, BoxObject):
                 obj._add_root(self)
+                self._add_branch(obj)
 
     def __iter__(self):
         args = [obj if isinstance(obj, BoxObject)\
@@ -362,20 +448,21 @@ class IfBox(AbstractBox):
     def __init__(self, cond, true, false):
         super().__init__()
         self.cond = cond
-        self._check_branches(true, false)
-        self.branches = (true, false)
-        for x in cond, true, false:
-            if isinstance(x, BoxObject):
-                x._add_root(self)
+        self._check_fork(true, false)
+        self.fork = (true, false)
+        for obj in cond, true, false:
+            if isinstance(obj, BoxObject):
+                obj._add_root(self)
+                self._add_branch(obj)
 
-    def _check_branches(self, *branches):
-        for b in branches:
+    def _check_fork(self, *fork):
+        for b in fork:
             if isinstance(b, Outlet) or hasattr(b, '_outlets') and b._outlets:
                 raise ValueError("true/false expressions can't contain outlets")
 
     def __iter__(self):
         true, false = [obj if isinstance(obj, BoxObject) else repeat(obj)\
-                       for obj in self.branches]
+                       for obj in self.fork]
         if isinstance(self.cond, BoxObject):
             for cond, true, false in zip(self.cond, true, false):
                 if cond:
@@ -392,10 +479,10 @@ class IfBox(AbstractBox):
         cond = next(self.cond) if isinstance(self.cond, BoxObject)\
                else self.cond
         cond = int(not cond)
-        if isinstance(self.branches[cond], BoxObject):
-            return next(self.branches[cond])
+        if isinstance(self.fork[cond], BoxObject):
+            return next(self.fork[cond])
         else:
-            return self.branches[cond]
+            return self.fork[cond]
 
 
 class ValueBox(AbstractBox):
