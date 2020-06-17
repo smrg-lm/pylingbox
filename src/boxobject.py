@@ -1,5 +1,4 @@
 
-from abc import ABC, abstractmethod
 from itertools import repeat
 
 from sc3.all import *  # *** BUG: No funciona si import sc3 no se inicializa.
@@ -13,7 +12,6 @@ from sc3.base.functions import AbstractFunction
 # - Los valores de repetición de los patterns podrían depender de una variable
 #   de configuración que haga que sean infinitos o no (Pattern.repeat = True).
 
-# - CONTINUAR DESDE: Within/Every COMO PROPIEDADES DE BOXOBJECT.
 # - Pensar simplemente como lenguaje para la secuenciación en vez de Pbind.
 # - Lo importante son los triggers con diferente tempo para las variables.
 # - Los outlets pueden ser genéricos o el equivalente a los streams de eventos
@@ -229,13 +227,7 @@ class Patch():  # si distintos patch llaman tiran del árbol por medio de los ou
         self._outlets = []
 
     def _build(self):
-        # esto se podría hacer dinámico si los triggers pueden cambiar,
-        # pero es recorrer el árbol a cada tic.
-        for outlet in self._outlets:
-            triggers = []
-            triggers.extend(outlet._get_triggers())
-            print(*triggers, outlet)  # los trig están ordenados por orden de evaluación.
-            ...
+        ...
 
     def play(self):
         # Evaluación ordenada de los triggers y los outlets.
@@ -316,6 +308,69 @@ class Outlet(BoxObject):
                         for o in tobj._outlets):  # No active outlet for other trigger objs.
                             trigger._active = False
             raise
+
+    def play(self):
+        # Evaluación ordenada de los triggers y los outlets.
+        # SE PUEDE HACER PARA UN OUTLET Y LUEGO PARA TODOS LOS OUTLETS DE
+        # UN PATCH. LAS DOS OPCIONES SON ÚTILES.
+        # 1. self()  # con print para test.
+        # 2. obtiene el delta de todos los triggers.
+        # 3. tiene que calcular las diferencias (por eso es más fácil con una
+        #    rutina por trigger pero que pasa si dos triggers caen en el mismo
+        #    tiempo lógico, terminana evaluando dos veces output() para un
+        #    mismo instante).
+        #    - Las ordena de menor a mayor y saca las diferencias consecutivas.
+        #    - Se hace una cola. (trig, out), (trig, out), ...
+        #    - Si la diferencia es cero los trig evalúan juntos (trig, trig, out)
+        #    - Se espera la primera diferencia y se hace next(trig(s)) self().
+        #    - Se obtiene un nuevo delta (o varios si se evaluaron varias juntas).
+        #      Ese nuevo delta es desde el timpo actual y está relacionado con
+        #      los delta de la cola, hay que buscar la posición que le
+        #      corresponde, calcular la diferencia con el anterior y ajustar
+        #      la diferencia del posterior.
+        print(self())
+        queue = [(t._delta, iter(t)) for t in self._get_triggers()]
+        queue.sort(key=lambda x: x[0])
+        prev_delta = 0
+        while True:
+            delta, trigger = queue.pop(0)
+            yield delta - prev_delta
+            next_delta = next(trigger)
+            queue.append((delta + next_delta, trigger))
+            queue.sort(key=lambda x: x[0])  # :(
+            prev_delta = delta
+            for delta, trigger in queue[:]:
+                if delta == prev_delta:  # Depende del rango y error, el redondeo puede no ser constante.
+                    queue.pop(0)
+                    next_delta = next(trigger)
+                    queue.append((delta + next_delta, trigger))
+                    queue.sort(key=lambda x: x[0])  # :(
+                else:
+                    break
+            try:
+                print(self())
+            except StopIteration:
+                break
+
+'''
+@patch
+def test():
+    a = SeqBox([1, 2, 3])
+    b = SeqBox([10, 20, 30, 40])
+    c = ValueBox(100)
+    r = a + b + c
+    x = Trigger(1)
+    y = Trigger(1)
+    z = Trigger(0.3)
+    x.connect(a)
+    y.connect(b)
+    z.connect(c)
+    Outlet(r)
+
+outs = test._outlets
+g = outs[0].play()
+[x for x in g]
+'''
 
 '''
 @patch
