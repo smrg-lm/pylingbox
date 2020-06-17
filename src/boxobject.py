@@ -3,6 +3,7 @@ from itertools import repeat
 
 from sc3.all import *  # *** BUG: No funciona si import sc3 no se inicializa.
 from sc3.base.functions import AbstractFunction
+import sc3.seq._taskq as tsq
 
 
 # https://stackoverflow.com/questions/26927571/multiple-inheritance-in-python3-with-different-signatures
@@ -313,44 +314,29 @@ class Outlet(BoxObject):
         # Evaluación ordenada de los triggers y los outlets.
         # SE PUEDE HACER PARA UN OUTLET Y LUEGO PARA TODOS LOS OUTLETS DE
         # UN PATCH. LAS DOS OPCIONES SON ÚTILES.
-        # 1. self()  # con print para test.
-        # 2. obtiene el delta de todos los triggers.
-        # 3. tiene que calcular las diferencias (por eso es más fácil con una
-        #    rutina por trigger pero que pasa si dos triggers caen en el mismo
-        #    tiempo lógico, terminana evaluando dos veces output() para un
-        #    mismo instante).
-        #    - Las ordena de menor a mayor y saca las diferencias consecutivas.
-        #    - Se hace una cola. (trig, out), (trig, out), ...
-        #    - Si la diferencia es cero los trig evalúan juntos (trig, trig, out)
-        #    - Se espera la primera diferencia y se hace next(trig(s)) self().
-        #    - Se obtiene un nuevo delta (o varios si se evaluaron varias juntas).
-        #      Ese nuevo delta es desde el timpo actual y está relacionado con
-        #      los delta de la cola, hay que buscar la posición que le
-        #      corresponde, calcular la diferencia con el anterior y ajustar
-        #      la diferencia del posterior.
-        print(self())
-        queue = [(t._delta, iter(t)) for t in self._get_triggers()]
-        queue.sort(key=lambda x: x[0])
+        queue = tsq.TaskQueue()
+        for trigger in self._get_triggers():
+            queue.add(float(trigger._delta), iter(trigger))
         prev_delta = 0
-        while True:
-            delta, trigger = queue.pop(0)
+
+        print(self())  # Initial outlet evaluation.
+
+        while not queue.empty():
+            delta, trigger = queue.pop()
             yield delta - prev_delta
-            next_delta = next(trigger)
-            queue.append((delta + next_delta, trigger))
-            queue.sort(key=lambda x: x[0])  # :(
+            next_delta = next(trigger)  # Exception.
+            queue.add(delta + next_delta, trigger)  # Tiende a overflow y error por resolución.
+            while not queue.empty()\
+            and round(delta, 9) == round(queue.peek()[0], 9):  # Sincroniza pero introduce un error diferente, hay que ver si converge para el delta de cada trigger.
+                trigger = queue.pop()[1]
+                next_delta = next(trigger)  # Exception.
+                queue.add(delta + next_delta, trigger)
             prev_delta = delta
-            for delta, trigger in queue[:]:
-                if delta == prev_delta:  # Depende del rango y error, el redondeo puede no ser constante.
-                    queue.pop(0)
-                    next_delta = next(trigger)
-                    queue.append((delta + next_delta, trigger))
-                    queue.sort(key=lambda x: x[0])  # :(
-                else:
-                    break
+
             try:
-                print(self())
+                print(self())  # Outlet evaluation.
             except StopIteration:
-                break
+                return
 
 '''
 @patch
