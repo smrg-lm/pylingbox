@@ -10,8 +10,11 @@ import sc3.seq._taskq as tsq
 # https://stackoverflow.com/questions/45581901/are-sets-ordered-like-dicts-in-python3-6
 
 # - Nombrar los un/bin/narops aunque sea an __str__
-# - Los valores de repetición de los patterns podrían depender de una variable
-#   de configuración que haga que sean infinitos o no (Pattern.repeat = True).
+# - Ver cómo se puede simplificar los métodos _add_* de BoxObject, todos hacen
+#   las mismas comprobaciones.
+# - Ver cómo se pueden simplificar todas las comprobaciones de tipo BoxObject
+#   (isinstance(self.cond, BoxObject)), as_boxobject es la manera sc, hay otra
+#   manera funcional?
 
 # - Pensar simplemente como lenguaje para la secuenciación en vez de Pbind.
 # - Lo importante son los triggers con diferente tempo para las variables.
@@ -22,6 +25,8 @@ import sc3.seq._taskq as tsq
 #   que creen o no synths, como reemplazo de pbind/pmono/artic.
 # - Tal vez mejor no hacer mensajes, descartar la idea de las cajas es adoptar
 #   el paradigma más funcional.
+# - Los valores de repetición de los patterns podrían depender de una variable
+#   de configuración que haga que sean infinitos o no (Pattern.repeat = True).
 
 
 # # Para triggers:
@@ -224,15 +229,68 @@ class Patch():  # si distintos patch llaman tiran del árbol por medio de los ou
     current_patch = None
 
     def __init__(self):
-        # self.tree = None  # *** puede haber más de un árbol independiente?
         self._outlets = []
 
-    def _build(self):
-        ...
+    @property
+    def outlets(self):
+        return self._outlets
 
     def play(self):
         # Evaluación ordenada de los triggers y los outlets.
-        ...
+        queue = tsq.TaskQueue()
+        added = set()
+        for out in self._outlets:
+            for trigger in out._get_triggers():
+                outlets = tuple(o for obj in trigger._objs for o in obj._outlets)
+                if not trigger in added:
+                    queue.add(float(trigger._delta), (iter(trigger), outlets))
+                    added.add(trigger)
+
+        print([out() for out in self._outlets])  # Initial outlet evaluation.
+
+        prev_delta = 0
+        while not queue.empty():
+            evaluables = set()
+            delta, (trigger, outlets) = queue.pop()
+            yield delta - prev_delta
+            next_delta = next(trigger)  # Exception if not inf.
+            evaluables.update(outlets)
+            queue.add(delta + next_delta, (trigger, outlets))  # Tiende a overflow y error por resolución.
+            while not queue.empty()\
+            and round(delta, 9) == round(queue.peek()[0], 9):  # Sincroniza pero introduce un error diferente, hay que ver si converge para el delta de cada trigger.
+                trigger, outlets = queue.pop()[1]
+                next_delta = next(trigger)  # Exception if not inf.
+                evaluables.update(outlets)
+                queue.add(delta + next_delta, (trigger, outlets))
+            prev_delta = delta
+
+            try:
+                print([out() for out in evaluables])  # Outlet evaluation.
+            except StopIteration:
+                return
+
+'''
+@patch
+def test():
+    seq1 = SeqBox([1, 2, 3])
+    seq2 = SeqBox([10, 20, 30, 40])
+    seq3 = SeqBox([100, 200, 300, 400])
+
+    res1 = seq1 + seq2
+    res2 = seq2 + seq3
+
+    trig = Trigger(1), Trigger(1), Trigger(0.3)
+    trig[0].connect(seq1)
+    trig[1].connect(seq2)
+    trig[2].connect(seq3)
+
+    Outlet(res1)
+    Outlet(res2)
+
+print(test.outlets)
+g = test.play()
+[x for x in g]
+'''
 
 
 def patch(func):
@@ -240,11 +298,19 @@ def patch(func):
     Patch.current_patch = p
     func()
     Patch.current_patch = None
-    p._build()
     return p
 
 
 class Trigger():
+    '''
+    Un trigger no es un nodo porque no necesita los atributos branches,
+    triggers, y caché, y no son evaluables. No es necesario que hereden
+    toda la maquinaria de BoxObject.
+    Los triggers son iterables que simplemente retornan una secuencia de floats
+    como deltas, los nodos BoxObject son tanto iteradores (__next__) como
+    iterables, pero cuando son usados como iterables los triggers se ignoran,
+    no forma parte del árbol de evaluación.
+    '''
     def __init__(self, delta):
         self._delta = delta
         self._objs = []
@@ -311,32 +377,8 @@ class Outlet(BoxObject):
             raise
 
     def play(self):
-        # Evaluación ordenada de los triggers y los outlets.
-        # SE PUEDE HACER PARA UN OUTLET Y LUEGO PARA TODOS LOS OUTLETS DE
-        # UN PATCH. LAS DOS OPCIONES SON ÚTILES.
-        queue = tsq.TaskQueue()
-        for trigger in self._get_triggers():
-            queue.add(float(trigger._delta), iter(trigger))
-        prev_delta = 0
+        return self._patch.play()
 
-        print(self())  # Initial outlet evaluation.
-
-        while not queue.empty():
-            delta, trigger = queue.pop()
-            yield delta - prev_delta
-            next_delta = next(trigger)  # Exception.
-            queue.add(delta + next_delta, trigger)  # Tiende a overflow y error por resolución.
-            while not queue.empty()\
-            and round(delta, 9) == round(queue.peek()[0], 9):  # Sincroniza pero introduce un error diferente, hay que ver si converge para el delta de cada trigger.
-                trigger = queue.pop()[1]
-                next_delta = next(trigger)  # Exception.
-                queue.add(delta + next_delta, trigger)
-            prev_delta = delta
-
-            try:
-                print(self())  # Outlet evaluation.
-            except StopIteration:
-                return
 
 '''
 @patch
