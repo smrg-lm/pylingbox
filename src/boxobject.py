@@ -15,6 +15,7 @@ import sc3.seq._taskq as tsq
 # - Ver cómo se pueden simplificar todas las comprobaciones de tipo BoxObject
 #   (isinstance(self.cond, BoxObject)), as_boxobject es la manera sc, hay otra
 #   manera funcional?
+# - Ver los play de synths.
 
 # - Pensar simplemente como lenguaje para la secuenciación en vez de Pbind.
 # - Lo importante son los triggers con diferente tempo para las variables.

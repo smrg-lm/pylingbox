@@ -166,3 +166,32 @@ piece = track((0, notes), (1.8, part), (0.7, notes))  # es un conjunto, start+du
 # y no solo realizar acciones de ejecución. Así todo se puede componer.
 
 suma = seq([1, 2, 3], within=1) + seq([1, 2, 3], within=2)  # ?
+
+
+# Boceto de organización formal a múltiples escalas.
+@synthdef
+def note(freq, amp, dur=1):
+    env = EnvGen(Env.asr(), scale=amp, stretch=dur, done_action=2)
+    sig = SinOsc(freq) * env
+    Out(0, sig)
+
+@patch
+def melo():
+    freq = seq([60, 69, 67, 59], trig(1))
+    amp = env([0, 1, 0], within(4))
+    outlet(freq, amp)
+
+@patch
+def frase():
+    # voice sería generador note (como pbind)
+    v1 = voice(melo(), within(3))
+    v2 = voice(melo() + 1, within(4))
+    r = seq([v1, v2])
+    outlet(r)
+
+@patch
+def forma():
+    # forma se puede alterar en duración externamente, por ejemplo.
+    s1 = onset(2, frase())
+    s2 = onset(3.1, frase())
+    outlet(mapa(s1, s2))
