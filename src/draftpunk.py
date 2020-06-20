@@ -239,3 +239,11 @@ def r():
     # de las operaciones pero, de nuevo, en es directo con el
     # paradigma de los buses, hay que agregar toda la lógica
     # como en jitlib.
+    #
+    # VER: si los @patch se podrían implementar como definiciones
+    # de síntesis, están las demand rate, pero estas serían algo
+    # distintas en cuanto a su composición, más programáticas en
+    # base al lenguaje de funciones temporales, tal vez como un
+    # multirate graph, tal vez sea otro poryecto entero, tal vez
+    # los triggers y los outlets deberían actuar según la lógica
+    # de los buses/cables, pero ver.
