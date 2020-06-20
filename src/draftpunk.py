@@ -168,6 +168,7 @@ piece = track((0, notes), (1.8, part), (0.7, notes))  # es un conjunto, start+du
 suma = seq([1, 2, 3], within=1) + seq([1, 2, 3], within=2)  # ?
 
 
+####################################################
 # Boceto de organización formal a múltiples escalas.
 @synthdef
 def note(freq, amp, dur=1):
@@ -195,3 +196,46 @@ def forma():
     s1 = onset(2, frase())
     s2 = onset(3.1, frase())
     outlet(mapa(s1, s2))
+
+
+#################################
+# Otro caso de uso paradigmático:
+g1 = Group()
+g2 = Group.after(g1)
+bus = Bus.audio(s, 2)
+
+@routine
+def r():
+    fx = Synth('effect', ['inbus', bus], target=g2)
+    while True:
+        synth = Synth('source', ['outbus', bus], target=g1)
+        yield 1
+
+...
+
+@path
+def r():
+    bus = Bus.audio()
+    g1 = Group()
+    g2 = Group.after(g1)
+    # target no sigue la lógica g1(synth1) u operaciones before/after,
+    # se podría hacer? El problema es similar al de los buses, son recursos
+    # compartidos/globales. Es el 'parent send' de Reaper y las DAW como
+    # opción por defecto.
+    fx = effect(bus, target=g2)
+    loopbox(lambda: source(bus, target=g1), 1)  # func, wait
+    # patch puede liberar los recursos cuando termina,
+    # es la función cleanup de los patterns.
+    # patch puede organizar conexiones como jitlib, por
+    # ejemplo si un patch crea un grupo y un subpatch crea
+    # suso nodos dentro de ese grupo, con subnodos, etc.
+    # Por cómo es el manejo de los buses, es distinto cuando
+    # una synth actúa como entrada de otra, no siempre es
+    # preciso escribir fxdef(sinte1), por fxdef lee de un
+    # bus que no es una conexión exclusiva entre dos synth.
+    #
+    # Otra posibilidad es que al crear synths se pueda operar
+    # sobre ellas y el orde de ejecución se define por el orden
+    # de las operaciones pero, de nuevo, en es directo con el
+    # paradigma de los buses, hay que agregar toda la lógica
+    # como en jitlib.
