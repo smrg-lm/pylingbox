@@ -10,8 +10,8 @@ import sc3.seq._taskq as tsq
 # https://stackoverflow.com/questions/45581901/are-sets-ordered-like-dicts-in-python3-6
 
 # - Nombrar los un/bin/narops aunque sea an __str__
-# - Ver cómo se pueden simplificar todas las comprobaciones de tipo BoxObject
-#   (isinstance(self.cond, BoxObject)), as_boxobject es la manera sc, hay otra
+# - Ver cómo se pueden simplificar todas las comprobaciones de tipo PatchObject
+#   (isinstance(self.cond, PatchObject)), as_patchobject es la manera sc, hay otra
 #   manera funcional?
 # - Ver los play de synths.
 #   * Son Outlets, pero hay que ver si pasan el valor, si actúan como salida o
@@ -49,7 +49,7 @@ import sc3.seq._taskq as tsq
 #         pass
 #
 #     def _iter_value(self):
-#         while True:  # *** BoxObject lo tiene que interrumpir.
+#         while True:  # *** PatchObject lo tiene que interrumpir.
 #             self._obj._clear_cache()
 #             yield self._delta
 #
@@ -132,7 +132,7 @@ class _UniqueList(list):
             super().remove(item)
 
 
-class BoxObject():
+class PatchObject():
     __NOCACHE = object()
 
     def __init__(self):
@@ -309,20 +309,26 @@ g = test.play()
 
 
 def patch(func):
-    p = Patch()
-    Patch.current_patch = p
-    func()
-    Patch.current_patch = None
-    return p
+    # SE PUEDE USAR CONTEXT MANAGER PARA EVITAR QUE CURRENT_PATCH QUEDE
+    # INCONSISTENTE SI FALLA LA EVALUACIÓN DE FUNC(). VER SYNTHDEF PERO
+    # CREO QUE TIENE TRY/EXCEPT.
+    try:
+        pch = Patch()
+        Patch.current_patch = pch
+        func()
+    except:
+        Patch.current_patch = None
+        raise
+    return pch
 
 
 class Trigger():
     '''
     Un trigger no es un nodo porque no necesita los atributos branches,
     triggers, y caché, y no son evaluables. No es necesario que hereden
-    toda la maquinaria de BoxObject.
+    toda la maquinaria de PatchObject.
     Los triggers son iterables que simplemente retornan una secuencia de floats
-    como deltas, los nodos BoxObject son tanto iteradores (__next__) como
+    como deltas, los nodos PatchObject son tanto iteradores (__next__) como
     iterables, pero cuando son usados como iterables los triggers se ignoran,
     no forma parte del árbol de evaluación.
     '''
@@ -359,10 +365,10 @@ print(next(x), s())
 '''
 
 
-class Outlet(BoxObject):
+class Outlet(PatchObject):
     def __init__(self, graph):
         super().__init__()
-        if not isinstance(graph, Outlet) and isinstance(graph, BoxObject):
+        if not isinstance(graph, Outlet) and isinstance(graph, PatchObject):
             graph._add_outlet(self)
         else:
             raise ValueError(
@@ -451,27 +457,29 @@ for i in range(3):
 '''
 
 
-class Inlet(BoxObject):
+class Inlet(PatchObject):
     def __init__(self, value):
         self._value = value
         value._add_root(self)
         self._add_branch(value)
 
     def __iter__(self):
-        if isinstance(self._value, BoxObject):
+        if isinstance(self._value, PatchObject):
             yield from self._value
         else:
             while True:
                 yield self._value
 
     def __next__(self):
-        if isinstance(self._value, BoxObject):
+        if isinstance(self._value, PatchObject):
             return next(self._value)
         else:
             return self._value
 
 
-class Message(BoxObject):
+class Message(PatchObject):
+    # Tiene branches porque puede contener secuencias y next evalúa los
+    # métodos de root. connect/disconnect tal vez no sean necesarios.
     def __init__(self, *msg):
         super().__init__()
         self.msg = msg
@@ -483,7 +491,7 @@ class Message(BoxObject):
         self._remove_root(target)
 
 
-class AbstractBox(BoxObject, AbstractFunction):
+class AbstractBox(PatchObject, AbstractFunction):
     def _compose_unop(self, selector):
         return UnaryOpBox(selector, self)
 
@@ -520,19 +528,19 @@ class BinaryOpBox(AbstractBox):
         self.a = a
         self.b = b
         for obj in a, b:
-            if isinstance(obj, BoxObject):
+            if isinstance(obj, PatchObject):
                 obj._add_root(self)
                 self._add_branch(obj)
 
     def __iter__(self):
-        ia = self.a if isinstance(self.a, BoxObject) else repeat(self.a)
-        ib = self.b if isinstance(self.b, BoxObject) else repeat(self.b)
+        ia = self.a if isinstance(self.a, PatchObject) else repeat(self.a)
+        ib = self.b if isinstance(self.b, PatchObject) else repeat(self.b)
         for a, b in zip(ia, ib):
             yield self.selector(a, b)
 
     def __next__(self):
-        a = self.a() if isinstance(self.a, BoxObject) else self.a
-        b = self.b() if isinstance(self.b, BoxObject) else self.b
+        a = self.a() if isinstance(self.a, PatchObject) else self.a
+        b = self.b() if isinstance(self.b, PatchObject) else self.b
         return self.selector(a, b)
 
 
@@ -545,18 +553,18 @@ class NAryOpBox(AbstractBox):
         a._add_root(self)
         self._add_branch(a)
         for obj in args:
-            if isinstance(obj, BoxObject):
+            if isinstance(obj, PatchObject):
                 obj._add_root(self)
                 self._add_branch(obj)
 
     def __iter__(self):
-        args = [obj if isinstance(obj, BoxObject)\
+        args = [obj if isinstance(obj, PatchObject)\
                 else repeat(obj) for obj in self.args]
         for a, *args in zip(self.a, *args):
             yield self.selector(a, *args)
 
     def __next__(self):
-        args = [next(obj) if isinstance(obj, BoxObject)\
+        args = [next(obj) if isinstance(obj, PatchObject)\
                 else obj for obj in self.args]
         return self.selector(next(self.a), *args)
 
@@ -568,7 +576,7 @@ class IfBox(AbstractBox):
         self._check_fork(true, false)
         self.fork = (true, false)
         for obj in cond, true, false:
-            if isinstance(obj, BoxObject):
+            if isinstance(obj, PatchObject):
                 obj._add_root(self)
                 self._add_branch(obj)
 
@@ -578,9 +586,9 @@ class IfBox(AbstractBox):
                 raise ValueError("true/false expressions can't contain outlets")
 
     def __iter__(self):
-        true, false = [obj if isinstance(obj, BoxObject) else repeat(obj)\
+        true, false = [obj if isinstance(obj, PatchObject) else repeat(obj)\
                        for obj in self.fork]
-        if isinstance(self.cond, BoxObject):
+        if isinstance(self.cond, PatchObject):
             for cond, true, false in zip(self.cond, true, false):
                 if cond:
                     yield true
@@ -593,10 +601,10 @@ class IfBox(AbstractBox):
                 yield from false
 
     def __next__(self):
-        cond = next(self.cond) if isinstance(self.cond, BoxObject)\
+        cond = next(self.cond) if isinstance(self.cond, PatchObject)\
                else self.cond
         cond = int(not cond)
-        if isinstance(self.fork[cond], BoxObject):
+        if isinstance(self.fork[cond], PatchObject):
             return next(self.fork[cond])
         else:
             return self.fork[cond]
@@ -675,21 +683,21 @@ class FunctionBox(AbstractBox):
         self.args = args
         self.kwargs = kwargs
         for obj in (*args, *kwargs.values()):
-            if isinstance(obj, BoxObject):
+            if isinstance(obj, PatchObject):
                 obj._add_root(self)
 
     def __iter__(self):
-        args = [obj if isinstance(obj, BoxObject) else repeat(obj)\
+        args = [obj if isinstance(obj, PatchObject) else repeat(obj)\
                 for obj in self.args]
         kwargs = {
-            key: value if isinstance(value, BoxObject) else repeat(value)\
+            key: value if isinstance(value, PatchObject) else repeat(value)\
                  for key, value in self.kwargs.items()}
         ...  # ?
 
     def __next__(self):
-        args = [next(x) if isinstance(x, BoxObject) else x for x in self.args]
+        args = [next(x) if isinstance(x, PatchObject) else x for x in self.args]
         kwargs = {
-            key: next(value) if isinstance(value, BoxObject) else value\
+            key: next(value) if isinstance(value, PatchObject) else value\
                  for key, value in self.kwargs.items()}
         return self.func(*args, **kwargs)
 
