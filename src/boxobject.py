@@ -10,12 +10,16 @@ import sc3.seq._taskq as tsq
 # https://stackoverflow.com/questions/45581901/are-sets-ordered-like-dicts-in-python3-6
 
 # - Nombrar los un/bin/narops aunque sea an __str__
-# - Ver cómo se puede simplificar los métodos _add_* de BoxObject, todos hacen
-#   las mismas comprobaciones.
 # - Ver cómo se pueden simplificar todas las comprobaciones de tipo BoxObject
 #   (isinstance(self.cond, BoxObject)), as_boxobject es la manera sc, hay otra
 #   manera funcional?
 # - Ver los play de synths.
+# ¿Cuáles son las diferencias entre un grafo de síntesis y un grafo de patcheo?
+# Además de que el patcheo está basado en 'eventos' pero se define como flujo
+# de eventos, como si fueran señales.
+
+# Pensar estos elementos y las posibles estructuras de datos que se generan
+# en relación a Score.
 
 # - Pensar simplemente como lenguaje para la secuenciación en vez de Pbind.
 # - Lo importante son los triggers con diferente tempo para las variables.
@@ -106,15 +110,29 @@ import sc3.seq._taskq as tsq
 # '''
 
 
+class _UniqueList(list):
+    def append(self, item):
+        if item not in self:
+            super().append(item)
+
+    def extend(self, iterable):
+        for item in iterable:
+            super().append(item)
+
+    def remove(self, item):
+        if item not in self:
+            super().remove(item)
+
+
 class BoxObject():
     __NOCACHE = object()
 
     def __init__(self):
         self.__cache = self.__NOCACHE
-        self.__roots = []
-        self.__branches = []
-        self.__outlets = []
-        self.__triggers = []
+        self.__roots = _UniqueList()
+        self.__branches = _UniqueList()
+        self.__outlets = _UniqueList()
+        self.__triggers = _UniqueList()
 
     def __iter__(self):
         raise NotImplementedError(f'{type(self).__name__}.__iter__')
@@ -152,73 +170,62 @@ class BoxObject():
         return self.__roots
 
     def _add_root(self, value):
-        if not value in self.__roots:
-            self.__roots.append(value)
+        self.__roots.append(value)
 
     def _remove_root(self, value):
-        if value in self.__roots:
-            self.__roots.remove(value)
+        self.__roots.remove(value)
 
     @property
     def _branches(self):
         return self.__branches
 
     def _add_branch(self, value):
-        if not value in self.__branches:
-            self.__branches.append(value)
+        self.__branches.append(value)
 
     def _remove_branch(self, value):
-        if not value in self.__branches:
-            self.__branches.remove(value)
+        self.__branches.remove(value)
 
     @property
     def _outlets(self):
         # Las salidas se buscan hacia la raíz.
-        ret = []
+        ret = _UniqueList()
         for r in self._roots:
             # *** ESTO VA A DEFINIR EL ORDEN DE EJECUCIÓN DE LOS OUTLETS.
             # *** VA CAMBIAR SEGÚN QUE NODO LLAME ESTA PROPIEDAD.
             for o in r._outlets:
-                if not o in ret:
-                    ret.append(o)
+                ret.append(o)
         for o in self.__outlets:
             # *** ESTO VA A BARAJAR EL ORDEN DE EJECUCIÓN DE LOS OUTLETS PROPIOS.
-            if not o in ret:
-                ret.append(o)
+            ret.append(o)
         return ret
 
     def _add_outlet(self, value):
-        if not value in self.__outlets:
-            self.__outlets.append(value)
+        self.__outlets.append(value)
 
     def _remove_outlet(self, value):
-        if value in self.__outlets:
-            self.__outlets.remove(value)
+        self.__outlets.remove(value)
 
     @property
     def _triggers(self):
         return self.__triggers
 
     def _add_trigger(self, value):
-        if not value in self.__triggers:
-            self.__triggers.append(value)
+        self.__triggers.append(value)
 
     def _remove_trigger(self, value):
-        if value in self.__triggers:
-            self.__triggers.remove(value)
+        self.__triggers.remove(value)
 
     def _get_triggers(self):
         # Los triggers se buscan hacia las hojas.
-        ret = []
+        ret = _UniqueList()
         for branch in self.__branches:
             ret.extend(branch._get_triggers())
         for trigger in self.__triggers:
-            if not trigger in ret:
-                ret.append(trigger)
+            ret.append(trigger)
         return ret
 
     def _get_triggered_objects(self):
-        ret = []
+        ret = _UniqueList()
         for branch in self.__branches:
             ret.extend(branch._get_triggered_objects())
         if self.__triggers:
@@ -243,9 +250,8 @@ class Patch():  # si distintos patch llaman tiran del árbol por medio de los ou
         for out in self._outlets:
             for trigger in out._get_triggers():
                 outlets = tuple(o for obj in trigger._objs for o in obj._outlets)
-                if not trigger in added:
-                    queue.add(float(trigger._delta), (iter(trigger), outlets))
-                    added.add(trigger)
+                queue.add(float(trigger._delta), (iter(trigger), outlets))
+                added.add(trigger)
 
         print([out() for out in self._outlets])  # Initial outlet evaluation.
 
