@@ -14,6 +14,14 @@ import sc3.seq._taskq as tsq
 #   (isinstance(self.cond, BoxObject)), as_boxobject es la manera sc, hay otra
 #   manera funcional?
 # - Ver los play de synths.
+#   * Son Outlets, pero hay que ver si pasan el valor, si actúan como salida o
+#     subgrafo, si los objetos generados se pasan o almacenan en algún lado.
+#   * Hay que tener en cuenta el tipo de abstracción que se crea, si es que se
+#     basa en duración constante o instrucciones de ejecución, new, release,
+#     la lógica es distinta para duración absoluta o sustain (noteoff/release).
+#   * Cuándo el generador es como mono, monoartc o pbind.
+#     Cuándo la instrucción que se genera es n_new o n_set, en general.
+#     Para algunas cosas se pueden usars grupos como target, scsynth propaga.
 # ¿Cuáles son las diferencias entre un grafo de síntesis y un grafo de patcheo?
 # Además de que el patcheo está basado en 'eventos' pero se define como flujo
 # de eventos, como si fueran señales.

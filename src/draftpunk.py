@@ -205,11 +205,22 @@ g2 = Group.after(g1)
 bus = Bus.audio(s, 2)
 
 @routine
-def r():
+def r1():
+    fx = Synth('effect', ['inbus', bus], target=g2)
+    while True:
+        # evento autónomo.
+        synth = Synth('source', ['outbus', bus], target=g1)
+        yield 1
+
+@routine
+def r2():
     fx = Synth('effect', ['inbus', bus], target=g2)
     while True:
         synth = Synth('source', ['outbus', bus], target=g1)
-        yield 1
+        yield 0.9
+        # receptor de instrucciones.
+        synth.release()
+        yield 0.1
 
 ...
 
@@ -223,6 +234,7 @@ def r():
     # compartidos/globales. Es el 'parent send' de Reaper y las DAW como
     # opción por defecto.
     fx = effect(bus, target=g2)
+    # autónomo (r1)
     loopbox(lambda: source(bus, target=g1), 1)  # func, wait
     # patch puede liberar los recursos cuando termina,
     # es la función cleanup de los patterns.
@@ -247,3 +259,33 @@ def r():
     # multirate graph, tal vez sea otro poryecto entero, tal vez
     # los triggers y los outlets deberían actuar según la lógica
     # de los buses/cables, pero ver.
+
+# Message es un objeto útil para el segudo caso, pero no guarda al receptor como tal,
+# cotiene el mensaje o es un generador de mensajes que puede estar conectado al receptor.
+# Ejemplo de receptor (r2):
+v = Violin()
+v.noteon(60)
+v.noteoff(60)
+# Ejemplo de mensaje (r2):
+msg = Mensaje()
+Cello(msg)
+msg.send('noteon', 60)
+msg.send('noteoff', 60)
+# Secuencia de mensajes a un objeto receptor, como en la segunda rutina (r2):
+msg = Message(Seq(['on 60', 'on 72', 'off 60', 'off 72'], Trigger([0.9, 0.1])))
+Instrument('cello', msg)
+# Incluso:
+freq = Midinote(60)
+amp = Message('set amp', Env([0, 1, 0]))
+Instrument('cello', freq, amp)  # es receptor de mensajes a parámetros
+# Así la inversión del flujo es coherente.
+
+# Conjunto de eventos puntuales (con secuencias internas):
+# La cuestión es que las tuplas del (mal llamado?) Map son eventos puntuales.
+msgs = Map(
+    Event(0, Message('on', 60)),
+    Event(1, Message('midinote', Seq([62, 64], trig))),  # función interna iniciada por un evento puntual.
+    Event(1, Message('amp', Env([0, 1, 0], within))),  # función interna iniciada por un evento puntual.
+    Event(8, Message('off')),
+)
+Instrument('cello', msgs)
