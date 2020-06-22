@@ -480,6 +480,9 @@ class Inlet(PatchObject):
 class Message(PatchObject):
     # Tiene branches porque puede contener secuencias y next evalúa los
     # métodos de root. connect/disconnect tal vez no sean necesarios.
+    # Ver de qué otras maneras se pueden componer mensajes a partir de
+    # secuencias y demás, tal vez simplemente dependa del objeto de destino
+    # como venía pensando, pero ver bien.
     def __init__(self, *msg):
         super().__init__()
         self.msg = msg

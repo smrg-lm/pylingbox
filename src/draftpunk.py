@@ -281,7 +281,7 @@ Instrument('cello', freq, amp)  # es receptor de mensajes a parámetros
 # Así la inversión del flujo es coherente.
 
 # Conjunto de eventos puntuales (con secuencias internas):
-# La cuestión es que las tuplas del (mal llamado?) Map son eventos puntuales.
+# La cuestión es que las tuplas del Map son eventos puntuales.
 msgs = Map(
     Event(0, Message('on', 60)),
     Event(1, Message('midinote', Seq([62, 64], trig))),  # función interna iniciada por un evento puntual.
@@ -289,3 +289,11 @@ msgs = Map(
     Event(8, Message('off')),
 )
 Instrument('cello', msgs)
+# Se puede reutilizar la palabra Track en el sentido de los multipista como
+# línea temporal, tal vez en vez de Map, pero Map está bien también.
+# Además un Track es una línea temporal que tiene un Bus y Grupo (como cadena
+# de efectos) y reproduce Buffers que genera y procesa señales y las reenvía.
+# Un Track es más específico que un Map. Pero, por ejemplo, un instrumento
+# vitual se puede poner como plugin de un trac midi que genera los sonidos
+# en base a los eventos/mensajes. Un Track también puede ser la realización
+# de las señales de control (automatizaciones).
