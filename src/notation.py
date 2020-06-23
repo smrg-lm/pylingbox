@@ -97,7 +97,7 @@ parse([60], [])  # [(1.0, 60)]
 parse([60, 62, 63], [])  # [(1.0, 60), (1.0, 62), (1.0, 63)]
 parse([60, s, [63, 62]], [])  # [(2.0, 60), (0.5, 63), (0.5, 62)]
 seq = parse([60, 66], [])
-seq = parse([[67, 61, 66, 62], [63, 65], 64], seq)  # extends
+seq = parse([[s, [67, 61], 66, 62], [63, 65], 64], seq)  # extends, puede comenzar con slur.
 '''
 
 
@@ -141,4 +141,8 @@ list(lazy_parse([[60]]))  # [(1.0, 60)]
 list(lazy_parse([60]))  # [(1.0, 60)]
 list(lazy_parse([60, 62, 63]))  # [(1.0, 60), (1.0, 62), (1.0, 63)]
 list(lazy_parse([60, s, [63, 62]]))  # [(2.0, 60), (0.5, 63), (0.5, 62)]
+def extend():
+    prev = yield from lazy_parse([60, 66], None, True)
+    yield from lazy_parse([[s, [67, 61], 66, 62], [63, 65], 64], prev)  # extends, puede comenzar con slur.
+list(extend())
 '''
