@@ -83,8 +83,10 @@ def parse(rhythm, res, beat=1.0):
         if isinstance(cell, list):
             if len(cell) > 1:
                 res = parse(cell, res, beat / len(cell))
+            elif cell:
+                res = _parse_append(cell[0], res, beat)
             else:
-                res = _parse_append(cell[0:1] or [], res, beat)
+                raise ValueError('empty cell')
         else:
             res = _parse_append(cell, res, beat)
     return res
@@ -124,8 +126,10 @@ def lazy_parse(rhythm, prev=None, nested=False, beat=1.0):
         if isinstance(cell, list):
             if len(cell) > 1:
                 prev = yield from lazy_parse(cell, prev, True, beat / len(cell))
+            elif cell:
+                prev = yield from _lazy_parse_yield(cell[0], prev, beat)
             else:
-                prev = yield from _lazy_parse_yield(cell[0:1] or [], prev, beat)
+                raise ValueError('empty cell')
         else:
             prev = yield from _lazy_parse_yield(cell, prev, beat)
     if nested:
