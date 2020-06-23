@@ -1,6 +1,6 @@
 # Notación Laurson, Tidal, Lilypond.
 
-# + es prolongación (ligadura)
+# + es prolongación (ligadura prolongación, tie en inglés).
 # - es silencio de voz.
 # , separa visualmente, equivalentes a spacio, son opcionales.
 
@@ -66,14 +66,14 @@ p6 = '[[a a] [+ a]]'
 # El parseo básico es simple.
 
 r = 'rest'
-s = 'slur'
+s = 'tie'
 
 def _parse_append(value, res, beat):
-    if value == 'slur':
+    if value == 'tie':
         if res:
             res[-1] = (res[-1][0] + beat, res[-1][1])
         else:
-            raise ValueError("sequence can't start with slur")  # res.append(([], cell))
+            raise ValueError("sequence can't start with tie")  # res.append(([], cell))
     else:
         res.append((beat, value))
     return res
@@ -99,23 +99,23 @@ parse([60], [])  # [(1.0, 60)]
 parse([60, 62, 63], [])  # [(1.0, 60), (1.0, 62), (1.0, 63)]
 parse([60, s, [63, 62]], [])  # [(2.0, 60), (0.5, 63), (0.5, 62)]
 seq = parse([60, 66], [])
-seq = parse([[s, [67, 61], 66, 62], [63, 65], 64], seq)  # extends, puede comenzar con slur.
+seq = parse([[s, [67, 61], 66, 62], [63, 65], 64], seq)  # extends, puede comenzar con tie.
 '''
 
 
 # La evaluación diferida es posible reemplazando append por yield pero habría
-# que mirar el próximo valor a ver si no es slur, el loop tiene que ir siempre
+# que mirar el próximo valor a ver si no es tie, el loop tiene que ir siempre
 # una posición adelantado.
 
 r = 'rest'
-s = 'slur'
+s = 'tie'
 
 def _lazy_parse_yield(value, prev, beat):
-    if value == 'slur':
+    if value == 'tie':
         if prev:
             return (prev[0] + beat, prev[1])
         else:
-            raise ValueError("sequence can't start with slur")
+            raise ValueError("sequence can't start with tie")
     else:
         if prev:
             yield prev
@@ -147,6 +147,6 @@ list(lazy_parse([60, 62, 63]))  # [(1.0, 60), (1.0, 62), (1.0, 63)]
 list(lazy_parse([60, s, [63, 62]]))  # [(2.0, 60), (0.5, 63), (0.5, 62)]
 def extend():
     prev = yield from lazy_parse([60, 66], None, True)
-    yield from lazy_parse([[s, [67, 61], 66, 62], [63, 65], 64], prev)  # extends, puede comenzar con slur.
+    yield from lazy_parse([[s, [67, 61], 66, 62], [63, 65], 64], prev)  # extends, puede comenzar con tie.
 list(extend())
 '''
