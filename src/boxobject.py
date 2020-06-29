@@ -483,6 +483,10 @@ class Message(PatchObject):
     # Ver de qué otras maneras se pueden componer mensajes a partir de
     # secuencias y demás, tal vez simplemente dependa del objeto de destino
     # como venía pensando, pero ver bien.
+    # Los mensajes, y esto es lo importante, se pueden usar para cambiar el
+    # estado de otros objetos en el grafo, porque el grafo est estático en
+    # cierto sentido, necesita de nodos que generen las llamadas a los métodos
+    # como mensajes. Así todo queda contenido en el grafo.
     def __init__(self, *msg):
         super().__init__()
         self.msg = msg
