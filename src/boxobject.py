@@ -4,6 +4,8 @@ from itertools import repeat
 from sc3.all import *  # *** BUG: No funciona si import sc3 no se inicializa.
 from sc3.base.functions import AbstractFunction
 import sc3.seq._taskq as tsq
+import sc3.synth.node as nod
+import sc3.synth.server as srv
 
 
 # https://stackoverflow.com/questions/26927571/multiple-inheritance-in-python3-with-different-signatures
@@ -25,6 +27,8 @@ import sc3.seq._taskq as tsq
 # ¿Cuáles son las diferencias entre un grafo de síntesis y un grafo de patcheo?
 # Además de que el patcheo está basado en 'eventos' pero se define como flujo
 # de eventos, como si fueran señales.
+# - Ver el grafo como iterable (si sirve, el grafo con trig es iterador), pueden
+#   ser útiles para generar partituras en nrt (simplemente como iters, sin nrt).
 
 # Pensar estos elementos y las posibles estructuras de datos que se generan
 # en relación a Score.
@@ -36,8 +40,6 @@ import sc3.seq._taskq as tsq
 # - Las synthdef, como funciones que se llama, podrían ser outlets, distintos
 #   tipos de outlets podrían generar distintos timpos de streams de eventos
 #   que creen o no synths, como reemplazo de pbind/pmono/artic.
-# - Tal vez mejor no hacer mensajes, descartar la idea de las cajas es adoptar
-#   el paradigma más funcional.
 # - Los valores de repetición de los patterns podrían depender de una variable
 #   de configuración que haga que sean infinitos o no (Pattern.repeat = True).
 
@@ -294,7 +296,7 @@ def test():
     res1 = seq1 + seq2
     res2 = seq2 + seq3
 
-    trig = Trigger(1), Trigger(1), Trigger(0.3)
+    trig = Trigger(1), Trigger(1), Trigger(1/3)
     trig[0].connect(seq1)
     trig[1].connect(seq2)
     trig[2].connect(seq3)
@@ -332,8 +334,8 @@ class Trigger():
     iterables, pero cuando son usados como iterables los triggers se ignoran,
     no forma parte del árbol de evaluación.
     '''
-    def __init__(self, delta):
-        self._delta = delta
+    def __init__(self, freq):
+        self._delta = 1.0 / freq
         self._objs = []
         self._active = True
 
@@ -368,24 +370,33 @@ print(next(x), s())
 class Outlet(PatchObject):
     def __init__(self, graph):
         super().__init__()
-        if not isinstance(graph, Outlet) and isinstance(graph, PatchObject):
-            graph._add_outlet(self)
+        self._add_input(graph)
+        self._graph = graph
+        self._set_patch(Patch.current_patch)
+
+    def _add_input(self, value):
+        if not isinstance(value, Outlet) and isinstance(value, PatchObject):
+            value._add_outlet(self)
+            value._add_root(self)
+            self._add_branch(value)
         else:
             raise ValueError(
-                f"'{type(graph).__class__}' is not a valid graph object")
-        self._graph = graph
-        graph._add_root(self)
-        self._add_branch(graph)
-        self._patch = Patch.current_patch
+                f"'{type(value).__class__}' ({value}) is invalid outlet input")
+
+    def _set_patch(self, patch):
+        self._patch = patch
         self._patch._outlets.append(self)
         self._active = True
+
+    def _value(self):
+        return self._graph()
 
     def __iter__(self):
         yield from self._graph
 
     def __next__(self):
         try:
-            return self._graph()
+            return self._value()
         except StopIteration:
             self._active = False
             for obj in self._get_triggered_objects():
@@ -404,16 +415,13 @@ class Outlet(PatchObject):
 '''
 @patch
 def test():
-    a = SeqBox([1, 2, 3])
-    b = SeqBox([10, 20, 30, 40])
-    c = ValueBox(100)
-    r = a + b + c
     x = Trigger(1)
     y = Trigger(1)
-    z = Trigger(0.3)
-    x.connect(a)
-    y.connect(b)
-    z.connect(c)
+    z = Trigger(3)
+    a = SeqBox([1, 2, 3], x)
+    b = SeqBox([10, 20, 30, 40], y)
+    c = ValueBox(100, z)
+    r = a + b + c
     Outlet(r)
 
 outs = test._outlets
@@ -454,6 +462,68 @@ for i in range(3):
 # next(itrig)  # 1
 # outs[2]()  # StopIteration
 # trig._active  # False
+'''
+
+
+class Note(Outlet):
+    # noteEvent de sc Event.
+
+    # *** El problema es que así hay que ponerle trigger a cada seq.
+    # *** CONSIDERAR POLIRRITMIA LINEAL Y REAL (melódica y armónica).
+    # *** LOS TRIG TAMBIÉN SE PODRÍAN COMPONER EN UNO SOLO CON UN OPERADOR ARITMÉTICO (&, ||, ??)
+    # *** ALGO QUE ES CONFUSO ES QUE LOS TRIGGERS NO PUEDEN ESTAR EN OUTLET, PORQUE NO LIMPIA LA CACHE,
+    # *** SE PODRÍA HACER QUE LA LIMPIE HACIA LAS HOJAS CUANDO EVALÚA, PERO QUÉ PASA CON LOS NODOS
+    # *** QUE SON SEQ PERO NO ESTÁ RELACIONADOS POR OPERACIÓN, NO RECUERDO POR LA PAUSA EN EL DESARROLLO.
+    # *** Y QUÉ PASA SI NO SE QUIERE PONER TRIGGER EN NINGÚN/CADA PARÁMETRO, TRIGGER PODRÍA SER UN
+    # *** BOXOBJECT? PORQUE SE PODRÍA ESCRIBIR Note(dur=Every(0.5)).
+    # *** PLAY DEBERÍA CREAR NUEVAS INSTANCIAS DEL PATCH Y SUS OBJETOS COMO LAS FUNCIONES GENERADORAS.
+
+    def __init__(self, *args, **kwargs):
+        super(Outlet, self).__init__()
+        self._params = dict()
+        for i, v in enumerate(args, 0):
+            self._add_input(v)
+            self._params[i] = v
+        for k, v in kwargs.items():
+            self._add_input(v)
+            self._params[k] = v
+        self._set_patch(Patch.current_patch)
+
+    def _value(self):  # *** va a ser intefaz de outlet, se llama desde next, tengo problemas con los nombres, next, call, value, poruqe outlet evalúa distinto.
+        ...  # bundle
+        params = {k: v() for k, v in self._params.items()}
+        def_name = params.pop('name', 'default')
+        target = params.pop('target', None)
+        add_action = params.pop('add_action', 'addToHead')
+        register = params.pop('register', None)
+        args = [i for t in params.items() for i in t]
+        synth = nod.Synth(def_name, args, target, add_action, register)
+        ... # release en base a dur msg.
+        ... # bundle
+        ... # send
+        return synth
+
+'''
+s.boot()
+
+@synthdef
+def ping(freq=440, amp=0.1):
+    sig = SinOsc(freq) * amp
+    env = EnvGen.kr(Env.perc(), done_action=Done.FREE_SELF)
+    Out(0, (sig * env).dup())
+
+# después...
+
+@patch
+def test():
+    freq = SeqBox([440, 480, 540, 580] * 10, trig=Trigger(1))
+    amp = SeqBox([0.01, 0.02] * 20, trig=Trigger(0.4))
+    name = ValueBox('ping')
+    Note(name=name, freq=freq, amp=amp)
+
+@routine.run()
+def r():
+    yield from test.play()
 '''
 
 
@@ -618,9 +688,11 @@ class IfBox(AbstractBox):
 
 
 class ValueBox(AbstractBox):
-    def __init__(self, value):
+    def __init__(self, value, trig=None):
         super().__init__()
         self._value = value
+        if trig:
+            trig.connect(self)
 
     def __iter__(self):
         while True:
@@ -631,11 +703,13 @@ class ValueBox(AbstractBox):
 
 
 class SeqBox(AbstractBox):
-    def __init__(self, lst):
+    def __init__(self, lst, trig=None):
         super().__init__()
         self._lst = lst
         self._len = len(lst)
         self._iterator = iter(lst)
+        if trig:
+            trig.connect(self)
 
     def __iter__(self):
         yield from self._lst
