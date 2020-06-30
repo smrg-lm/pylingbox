@@ -138,6 +138,8 @@ class PatchObject():
     __NOCACHE = object()
 
     def __init__(self):
+        self.__patch = Patch.current_patch
+        self.__prev_cycle = -1
         self.__cache = self.__NOCACHE
         self.__roots = _UniqueList()
         self.__branches = _UniqueList()
@@ -150,12 +152,35 @@ class PatchObject():
     def __next__(self):
         raise NotImplementedError(f'{type(self).__name__}.__next__')
 
+    # Tal vez RENOMBRAR, pero ojo que _value de Outlet es otra función llamada por esta a través de next.
     def __call__(self):
-        if self._cached:
-            return self._cache
+        # Patch is a generator function that creates an timed generator
+        # iterator. PatchObjects are evaluated by cycle. A cycle is started
+        # by any Trigger contained in the Patch. PatchObject with triggers
+        # are evaluated with it's own Trigger's timing by cleaning the cache.
+        # PatchObject without a Trigger is evaluated by the cycle of
+        # something's else Trigger if is in its op branch.
+        # As consecuencie, if a PatchObject without Trigger is in the branch
+        # of more than other PatchObject with different Triggers it will be
+        # consumed by the triggers of every shared expression, a copy whould
+        # be needed to avoid this. Is it too much compliated?
+        if self.__triggers:
+            if self._cached:
+                return self._cache
+            else:
+                ret = self._cache = next(self)
+                return ret
         else:
-            ret = self._cache = next(self)
-            return ret
+            if self._patch._cycle > self.__prev_cycle:
+                self.__prev_cycle = self._patch._cycle
+                ret = self._cache = next(self)
+                return ret
+            else:
+                return self._cache
+
+    @property
+    def _patch(self):
+        return self.__patch
 
     @property
     def _cache(self):
@@ -248,6 +273,7 @@ class Patch():  # si distintos patch llaman tiran del árbol por medio de los ou
 
     def __init__(self):
         self._outlets = []
+        self._cycle = 0
 
     @property
     def outlets(self):
@@ -256,20 +282,22 @@ class Patch():  # si distintos patch llaman tiran del árbol por medio de los ou
     def play(self):
         # Evaluación ordenada de los triggers y los outlets.
         queue = tsq.TaskQueue()
-        added = set()
         for out in self._outlets:
             for trigger in out._get_triggers():
                 outlets = tuple(o for obj in trigger._objs for o in obj._outlets)
                 queue.add(float(trigger._delta), (iter(trigger), outlets))
-                added.add(trigger)
 
-        print([out() for out in self._outlets])  # Initial outlet evaluation.
+        # Initial outlet evaluation, self._cycle == 0.
+        print(f'cycle {self._cycle} ---------------------------------')
+        for out in self._outlets:
+            out()
 
         prev_delta = 0
         while not queue.empty():
             evaluables = set()
             delta, (trigger, outlets) = queue.pop()
             yield delta - prev_delta
+            self._cycle += 1
             next_delta = next(trigger)  # Exception if not inf.
             evaluables.update(outlets)
             queue.add(delta + next_delta, (trigger, outlets))  # Tiende a overflow y error por resolución.
@@ -282,7 +310,10 @@ class Patch():  # si distintos patch llaman tiran del árbol por medio de los ou
             prev_delta = delta
 
             try:
-                print([out() for out in evaluables])  # Outlet evaluation.
+                # Outlet evaluation.
+                print(f'cycle {self._cycle} ---------------------------------')
+                for out in evaluables:
+                    out()
             except StopIteration:
                 return
 
@@ -294,23 +325,29 @@ def test():
     seq3 = SeqBox([100, 200, 300, 400])
 
     res1 = seq1 + seq2
-    res2 = seq2 + seq3
+    res2 = (1000 + seq1) + seq2 + seq3
 
-    trig = Trigger(1), Trigger(1), Trigger(1/3)
-    trig[0].connect(seq1)
+    trig = Trigger(1), Trigger(1), Trigger(3)
+    # trig[0].connect(seq1)
     trig[1].connect(seq2)
     trig[2].connect(seq3)
 
     Outlet(res1)
     Outlet(res2)
 
-print(test.outlets)
-g = test.play()
-[x for x in g]
+print([id(out) for out in test.outlets])
+
+@routine
+def r():
+    yield from test.play()
+
+r.play()
 '''
 
 
 def patch(func):
+    # *** Hay que pensar Patch como  una función generadora, tiene que crear
+    # *** nuevas instancias cada vez que se evalúa, no acá.
     # SE PUEDE USAR CONTEXT MANAGER PARA EVITAR QUE CURRENT_PATCH QUEDE
     # INCONSISTENTE SI FALLA LA EVALUACIÓN DE FUNC(). VER SYNTHDEF PERO
     # CREO QUE TIENE TRY/EXCEPT.
@@ -372,7 +409,7 @@ class Outlet(PatchObject):
         super().__init__()
         self._add_input(graph)
         self._graph = graph
-        self._set_patch(Patch.current_patch)
+        self._init()
 
     def _add_input(self, value):
         if not isinstance(value, Outlet) and isinstance(value, PatchObject):
@@ -383,8 +420,8 @@ class Outlet(PatchObject):
             raise ValueError(
                 f"'{type(value).__class__}' ({value}) is invalid outlet input")
 
-    def _set_patch(self, patch):
-        self._patch = patch
+    def _init(self):
+        self._add_outlet(self)  # *** No estoy seguro si Outlet puede/debe ser su propio Outlet pero se necesitaría para Trigger.
         self._patch._outlets.append(self)
         self._active = True
 
@@ -407,9 +444,6 @@ class Outlet(PatchObject):
                         for o in tobj._outlets):  # No active outlet for other trigger objs.
                             trigger._active = False
             raise
-
-    def play(self):
-        return self._patch.play()
 
 
 '''
@@ -487,7 +521,7 @@ class Note(Outlet):
         for k, v in kwargs.items():
             self._add_input(v)
             self._params[k] = v
-        self._set_patch(Patch.current_patch)
+        self._init()
 
     def _value(self):  # *** va a ser intefaz de outlet, se llama desde next, tengo problemas con los nombres, next, call, value, poruqe outlet evalúa distinto.
         ...  # bundle
@@ -497,6 +531,7 @@ class Note(Outlet):
         add_action = params.pop('add_action', 'addToHead')
         register = params.pop('register', None)
         args = [i for t in params.items() for i in t]
+        print('+++', args)
         synth = nod.Synth(def_name, args, target, add_action, register)
         ... # release en base a dur msg.
         ... # bundle
@@ -516,10 +551,11 @@ def ping(freq=440, amp=0.1):
 
 @patch
 def test():
-    freq = SeqBox([440, 480, 540, 580] * 10, trig=Trigger(1))
-    amp = SeqBox([0.01, 0.02] * 20, trig=Trigger(0.4))
+    freq = SeqBox([440, 480, 540, 580] * 2, trig=Trigger(1))
+    amp = SeqBox([0.01, 0.1] * 4)  #, trig=Trigger(0.4))
     name = ValueBox('ping')
-    Note(name=name, freq=freq, amp=amp)
+    note = Note(name=name, freq=freq, amp=amp)
+    # Trigger(3).connect(note)
 
 @routine.run()
 def r():
