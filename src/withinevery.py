@@ -125,8 +125,6 @@ def expmov(t1, t2, step, exp):
     # exp > 0
     # exp == 1 -> lineal
     # intervalo abierto.
-    # mantiene la cantidad de pasos que son entre 0 y 1.
-    # step = 1 / stepS # len(seq)
     dist = t2 - t1
     dt = t1
     pct = 0
@@ -142,3 +140,24 @@ list(expmov(1, 4, 0.1, 1.5))
 # sn = n * (a1 + a[n]) / 2  # aritmética
 # sn = a1 * (1 - r ** n) / (1 - r)  # r = a[n] / a[n-1], r != 1  # geométrica
 # sn = (1 - a ** (n+1)) / (1 - a)  # exponencial
+
+
+# La que habíamos hecho con Mauro.
+# Es como within2 pero sin pasar la unidad de referencia (pero calcula sum).
+# Factor es el factor de normalizedSum para cada item.
+def norma(seq, within=1):
+    factor = 1 / sum(seq) * within
+    for i in seq:
+        yield i * factor
+
+res = list(norma([1, 0.5, 0.5], 5))
+print(sum(res), res)
+
+
+def exp(steps):
+    t = 1 / steps
+    for i in range(steps):
+        yield (2 ** (i * t) - 1)
+
+res = list(exp(10))
+print(res, list(norma(res)))

@@ -409,7 +409,7 @@ class Outlet(PatchObject):
         super().__init__()
         self._add_input(graph)
         self._graph = graph
-        self._init()
+        self._init_outlet()
 
     def _add_input(self, value):
         if not isinstance(value, Outlet) and isinstance(value, PatchObject):
@@ -420,7 +420,7 @@ class Outlet(PatchObject):
             raise ValueError(
                 f"'{type(value).__class__}' ({value}) is invalid outlet input")
 
-    def _init(self):
+    def _init_outlet(self):
         self._add_outlet(self)  # *** No estoy seguro si Outlet puede/debe ser su propio Outlet pero se necesitaría para Trigger.
         self._patch._outlets.append(self)
         self._active = True
@@ -521,7 +521,7 @@ class Note(Outlet):
         for k, v in kwargs.items():
             self._add_input(v)
             self._params[k] = v
-        self._init()
+        self._init_outlet()
 
     def _value(self):  # *** va a ser intefaz de outlet, se llama desde next, tengo problemas con los nombres, next, call, value, poruqe outlet evalúa distinto.
         ...  # bundle
