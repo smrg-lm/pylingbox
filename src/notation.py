@@ -150,3 +150,74 @@ def extend():
     yield from lazy_parse([[s, [67, 61], 66, 62], [63, 65], 64], prev)  # extends, puede comenzar con tie.
 list(extend())
 '''
+
+
+# Notaciones...
+
+R[[C, [rest, G]], [tie, [Bb, D], Eb]]
+
+# Los objetos/clases son singleton.
+# Algunas variaciones son demasiado rebuscadas,
+# la única que rescato son los cifrados.
+
+Pcs[0, 1, 2]  # este era constructor, podrían ser paréntesis, pero es un vector.
+
+C[0], D[2], E[3], F[4], G[5], A[3], B[0]  # índice
+
+C['^'],  C['.'], Cs['<'], D['>']
+
+C + E + G  # Chord(C, E, G) o vector interválico
+
+C - G  # o intervalo descendente
+
+A.s
+A.b, G, F, E.b
+
+F('maj7') / A  # mayor 7 en primera inversión..
+F('maj7/A')
+F('maj7', A)
+
+C('.'), C('.'), C('-'), C('-')  # articulaciones?
+
+
+import types
+
+
+class PitchClass(type):
+    def __call__(cls):
+        return cls
+
+    # Habría que deshabilitar métodos.
+    # def __new__(...):
+    #     return cls
+
+    def __int__(cls):
+        return cls._pcnum
+
+    def __float__(cls):
+        return float(cls._pcnum)
+
+    def __str__(cls):
+        return cls.__name__
+
+    def __repr__(cls):
+        return cls.__name__
+
+
+_pc = ['C', 'Cs', 'D', 'Eb', 'E', 'F', 'Fs', 'G', 'Ab', 'A', 'Bb', 'B']
+_kwords = {'metaclass': PitchClass}
+
+def _init(pcnum):
+    return lambda ns: ns.update({'_pcnum': pcnum})
+
+for i, pc in enumerate(_pc):
+    globals().update({pc: types.new_class(pc, (), _kwords, _init(i))})
+
+
+class Chord():
+    ...  # cómo se lleva con la tupla como elemento armónico?
+
+
+class Voicing():
+    # por reglas contrapuntísticas básicas y programables.
+    ...
