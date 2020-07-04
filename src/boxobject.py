@@ -29,6 +29,10 @@ import sc3.synth.server as srv
 # de eventos, como si fueran señales.
 # - Ver el grafo como iterable (si sirve, el grafo con trig es iterador), pueden
 #   ser útiles para generar partituras en nrt (simplemente como iters, sin nrt).
+#   PERO ES ASIGNARLE DOS SIGNIFICADOS DISTINTOS A LO MISMO. ITER DEBERÍA
+#   RETORNAR LO QUE SE RETORNA CON PLAY, de alguna manera, el grafo ES o NO ES
+#   temporal. Pero también se podría hacer Trig(Seq([0.5, 0.3, 0.2], repeat))
+#   pero Trig pasa a ser objeto del grafo (PatchObject).
 
 # Pensar estos elementos y las posibles estructuras de datos que se generan
 # en relación a Score.
@@ -45,7 +49,7 @@ import sc3.synth.server as srv
 
 
 # # Para triggers:
-# class TriggerFunction(ABC):
+# class TrigFunction(ABC):
 #     @abstractmethod
 #     def _iter_map(self):
 #         pass
@@ -56,7 +60,7 @@ import sc3.synth.server as srv
 #             yield self._delta
 #
 #     def __iter__(self):
-#         if isinstance(self._obj, TriggerFunction):
+#         if isinstance(self._obj, TrigFunction):
 #             return self._iter_map()
 #         else:
 #             return self._iter_value()
@@ -65,7 +69,7 @@ import sc3.synth.server as srv
 #         return len(self._obj)
 #
 #
-# class Within(TriggerFunction):
+# class Within(TrigFunction):
 #     def __init__(self, time, obj):
 #         self._unit = time
 #         self._delta = time / len(obj)  # *** FALTA EL CASO EVERY.
@@ -80,7 +84,7 @@ import sc3.synth.server as srv
 #             yield delta * scale
 #
 #
-# class Every(TriggerFunction):
+# class Every(TrigFunction):
 #     def __init__(self, time, obj):
 #         self._unit = time * len(obj)  # *** FALTA EL CASO WITHIN.
 #         self._delta = time
@@ -110,7 +114,7 @@ import sc3.synth.server as srv
 #                     new_count += new_delta
 #
 # '''
-# s = SeqBox([1, 2, 3])
+# s = Seq([1, 2, 3])
 # x = Within(1, s)
 # x = Every(0.1, x)
 # # x = Within(3, x)  # llama, pero no está bien el tiempo
@@ -135,7 +139,7 @@ class _UniqueList(list):
 
 
 class PatchObject():
-    __NOCACHE = object()
+    class __NOCACHE(): pass
 
     def __init__(self):
         self.__patch = Patch.current_patch
@@ -156,12 +160,12 @@ class PatchObject():
     def __call__(self):
         # Patch is a generator function that creates an timed generator
         # iterator. PatchObjects are evaluated by cycle. A cycle is started
-        # by any Trigger contained in the Patch. PatchObject with triggers
-        # are evaluated with it's own Trigger's timing by cleaning the cache.
-        # PatchObject without a Trigger is evaluated by the cycle of
-        # something's else Trigger if is in its op branch.
-        # As consecuencie, if a PatchObject without Trigger is in the branch
-        # of more than other PatchObject with different Triggers it will be
+        # by any Trig contained in the Patch. PatchObject with triggers
+        # are evaluated with it's own Trig's timing by cleaning the cache.
+        # PatchObject without a Trig is evaluated by the cycle of
+        # something's else Trig if is in its op branch.
+        # As consecuencie, if a PatchObject without Trig is in the branch
+        # of more than other PatchObject with different Trigs it will be
         # consumed by the triggers of every shared expression, a copy whould
         # be needed to avoid this. Is it too much compliated?
         if self.__triggers:
@@ -288,7 +292,6 @@ class Patch():  # si distintos patch llaman tiran del árbol por medio de los ou
                 queue.add(float(trigger._delta), (iter(trigger), outlets))
 
         # Initial outlet evaluation, self._cycle == 0.
-        print(f'cycle {self._cycle} ---------------------------------')
         for out in self._outlets:
             out()
 
@@ -311,23 +314,23 @@ class Patch():  # si distintos patch llaman tiran del árbol por medio de los ou
 
             try:
                 # Outlet evaluation.
-                print(f'cycle {self._cycle} ---------------------------------')
                 for out in evaluables:
                     out()
             except StopIteration:
+                # *** Hacer: cuando hay más de una salida y algunas terminan antes.
                 return
 
 '''
 @patch
 def test():
-    seq1 = SeqBox([1, 2, 3])
-    seq2 = SeqBox([10, 20, 30, 40])
-    seq3 = SeqBox([100, 200, 300, 400])
+    seq1 = Seq([1, 2, 3])
+    seq2 = Seq([10, 20, 30, 40])
+    seq3 = Seq([100, 200, 300, 400])
 
     res1 = seq1 + seq2
     res2 = (1000 + seq1) + seq2 + seq3
 
-    trig = Trigger(1), Trigger(1), Trigger(3)
+    trig = Trig(1), Trig(1), Trig(3)
     # trig[0].connect(seq1)
     trig[1].connect(seq2)
     trig[2].connect(seq3)
@@ -361,7 +364,7 @@ def patch(func):
     return pch
 
 
-class Trigger():
+class Trig():
     '''
     Un trigger no es un nodo porque no necesita los atributos branches,
     triggers, y caché, y no son evaluables. No es necesario que hereden
@@ -396,8 +399,8 @@ class Trigger():
 
 
 '''
-s = SeqBox([1, 2, 3])
-x = Trigger(1)
+s = Seq([1, 2, 3])
+x = Trig(1)
 x.connect(s)
 x = iter(x)
 print(next(x), s())
@@ -405,11 +408,18 @@ print(next(x), s())
 
 
 class Outlet(PatchObject):
-    def __init__(self, graph):
+    def __init__(self, graph, trig=None):
         super().__init__()
         self._add_input(graph)
         self._graph = graph
         self._init_outlet()
+        if trig:
+            trig.connect(self)
+        # *** Tal vez cualquier parámetro de un PatchObject podría ser un trig,
+        # *** como pongo abajo dur=Every, pero también podría ser dur=Seq, y
+        # *** seq es/tiene un trigger. Se me ocurre que de alguna manera
+        # *** implícita pero sistemática se puede mutar cualquier patchobject
+        # *** a trigger (?).
 
     def _add_input(self, value):
         if not isinstance(value, Outlet) and isinstance(value, PatchObject):
@@ -421,7 +431,7 @@ class Outlet(PatchObject):
                 f"'{type(value).__class__}' ({value}) is invalid outlet input")
 
     def _init_outlet(self):
-        self._add_outlet(self)  # *** No estoy seguro si Outlet puede/debe ser su propio Outlet pero se necesitaría para Trigger.
+        self._add_outlet(self)  # *** No estoy seguro si Outlet puede/debe ser su propio Outlet pero se necesitaría para Trig.
         self._patch._outlets.append(self)
         self._active = True
 
@@ -449,12 +459,12 @@ class Outlet(PatchObject):
 '''
 @patch
 def test():
-    x = Trigger(1)
-    y = Trigger(1)
-    z = Trigger(3)
-    a = SeqBox([1, 2, 3], x)
-    b = SeqBox([10, 20, 30, 40], y)
-    c = ValueBox(100, z)
+    x = Trig(1)
+    y = Trig(1)
+    z = Trig(3)
+    a = Seq([1, 2, 3], x)
+    b = Seq([10, 20, 30, 40], y)
+    c = Value(100, z)
     r = a + b + c
     Outlet(r)
 
@@ -466,14 +476,14 @@ g = outs[0].play()
 '''
 @patch
 def test():
-    a = SeqBox([1, 2, 3])
-    b = ValueBox(10)
-    c = ValueBox(100)
+    a = Seq([1, 2, 3])
+    b = Value(10)
+    c = Value(100)
     r1 = a * b
     r2 = a * b + c
-    d = SeqBox([1, 2, 3, 4])
+    d = Seq([1, 2, 3, 4])
     r3 = d * 1000
-    x = Trigger(1)
+    x = Trig(1)
     x.connect(a)
     x.connect(d)
     Outlet(r1)
@@ -502,7 +512,11 @@ for i in range(3):
 class Note(Outlet):
     # noteEvent de sc Event.
 
-    # *** El problema es que así hay que ponerle trigger a cada seq.
+    # *** El problema es que así hay que ponerle trigger a cada seq, o un
+    # *** trigger a Outlet que tire de los demás (por ciclo). Outlet está con
+    # *** trigger ahora, esta clase no está actualizada. la palabra 'trig' la
+    # *** estoy usando acá y se usa como SynthDef key arg, problema.
+
     # *** CONSIDERAR POLIRRITMIA LINEAL Y REAL (melódica y armónica).
     # *** LOS TRIG TAMBIÉN SE PODRÍAN COMPONER EN UNO SOLO CON UN OPERADOR ARITMÉTICO (&, ||, ??)
     # *** ALGO QUE ES CONFUSO ES QUE LOS TRIGGERS NO PUEDEN ESTAR EN OUTLET, PORQUE NO LIMPIA LA CACHE,
@@ -551,11 +565,11 @@ def ping(freq=440, amp=0.1):
 
 @patch
 def test():
-    freq = SeqBox([440, 480, 540, 580] * 2, trig=Trigger(1))
-    amp = SeqBox([0.01, 0.1] * 4)  #, trig=Trigger(0.4))
-    name = ValueBox('ping')
+    freq = Seq([440, 480, 540, 580] * 2, trig=Trig(1))
+    amp = Seq([0.01, 0.1] * 4)  #, trig=Trig(0.4))
+    name = Value('ping')
     note = Note(name=name, freq=freq, amp=amp)
-    # Trigger(3).connect(note)
+    # Trig(3).connect(note)
 
 @routine.run()
 def r():
@@ -565,9 +579,11 @@ def r():
 
 class Inlet(PatchObject):
     def __init__(self, value):
+        super().__init__()
         self._value = value
-        value._add_root(self)
-        self._add_branch(value)
+        if isinstance(self._value, PatchObject):
+            value._add_root(self)
+            self._add_branch(value)
 
     def __iter__(self):
         if isinstance(self._value, PatchObject):
@@ -578,9 +594,29 @@ class Inlet(PatchObject):
 
     def __next__(self):
         if isinstance(self._value, PatchObject):
-            return next(self._value)
+            return self._value()
         else:
             return self._value
+
+
+class Trace(PatchObject):
+    def __init__(self, obj, trig=None):
+        super().__init__()
+        self._obj = obj
+        obj._add_root(self)
+        self._add_branch(obj)
+        if trig:
+            trig.connect(self)
+
+    def __iter__(self):
+        yield from self._obj
+
+    def __next__(self):
+        value = self._obj()
+        print(
+            f'Trace: <{type(self._obj).__name__}, {hex(id(self._obj))}>, '
+            f'cycle: {self._patch._cycle}, value: {value}')
+        return value
 
 
 class Message(PatchObject):
@@ -631,7 +667,7 @@ class UnaryOpBox(AbstractBox):
             yield self.selector(value)
 
     def __next__(self):
-        return self.selector(next(self.a))
+        return self.selector(self.a())
 
 
 class BinaryOpBox(AbstractBox):
@@ -677,12 +713,12 @@ class NAryOpBox(AbstractBox):
             yield self.selector(a, *args)
 
     def __next__(self):
-        args = [next(obj) if isinstance(obj, PatchObject)\
+        args = [obj() if isinstance(obj, PatchObject)\
                 else obj for obj in self.args]
-        return self.selector(next(self.a), *args)
+        return self.selector(self.a(), *args)
 
 
-class IfBox(AbstractBox):
+class If(AbstractBox):
     def __init__(self, cond, true, false):
         super().__init__()
         self.cond = cond
@@ -714,16 +750,16 @@ class IfBox(AbstractBox):
                 yield from false
 
     def __next__(self):
-        cond = next(self.cond) if isinstance(self.cond, PatchObject)\
+        cond = self.cond() if isinstance(self.cond, PatchObject)\
                else self.cond
         cond = int(not cond)
         if isinstance(self.fork[cond], PatchObject):
-            return next(self.fork[cond])
+            return self.fork[cond]()
         else:
             return self.fork[cond]
 
 
-class ValueBox(AbstractBox):
+class Value(AbstractBox):
     def __init__(self, value, trig=None):
         super().__init__()
         self._value = value
@@ -738,7 +774,7 @@ class ValueBox(AbstractBox):
         return self._value
 
 
-class SeqBox(AbstractBox):
+class Seq(AbstractBox):
     def __init__(self, lst, trig=None):
         super().__init__()
         self._lst = lst
@@ -758,8 +794,8 @@ class SeqBox(AbstractBox):
 
 '''
 # Grafo de iteradores con call/cache.
-a = SeqBox([1, 2, 3])
-b = ValueBox(0)
+a = Seq([1, 2, 3])
+b = Value(0)
 c = a + b
 o = Outlet(c)
 print(next(o))
@@ -779,10 +815,10 @@ print(next(o))
 
 '''
 # Grafo de iterables (__iter__). Es UNA de las dos opciones, sin triggers.
-a = SeqBox([1, 2, 3])
-b = ValueBox(0)
+a = Seq([1, 2, 3])
+b = Value(0)
 c = a + b
-i = IfBox(c > 2, ValueBox(True), ValueBox(False))
+i = If(c > 2, Value(True), Value(False))
 o = Outlet(i)
 
 o = iter(o)
@@ -812,15 +848,15 @@ class FunctionBox(AbstractBox):
         ...  # ?
 
     def __next__(self):
-        args = [next(x) if isinstance(x, PatchObject) else x for x in self.args]
+        args = [x() if isinstance(x, PatchObject) else x for x in self.args]
         kwargs = {
-            key: next(value) if isinstance(value, PatchObject) else value\
+            key: value() if isinstance(value, PatchObject) else value\
                  for key, value in self.kwargs.items()}
         return self.func(*args, **kwargs)
 
 '''
-a = ValueBox(1)
-b = ValueBox(2)
+a = Value(1)
+b = Value(2)
 c = a + b
 o = Outlet(c)
 
@@ -834,10 +870,10 @@ for obj in a, b, c, o:
 '''
 
 '''
-a = ValueBox(1)
-b = ValueBox(0)
+a = Value(1)
+b = Value(0)
 c = a + b
-i = IfBox(c > 2, ValueBox(True), ValueBox(False))
+i = If(c > 2, Value(True), Value(False))
 o = Outlet(i)
 
 o = iter(o)
