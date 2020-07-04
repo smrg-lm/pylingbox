@@ -642,19 +642,19 @@ class Message(PatchObject):
 
 class AbstractBox(PatchObject, AbstractFunction):
     def _compose_unop(self, selector):
-        return UnaryOpBox(selector, self)
+        return UnopBox(selector, self)
 
     def _compose_binop(self, selector, other):
-        return BinaryOpBox(selector, self, other)
+        return BinopBox(selector, self, other)
 
     def _rcompose_binop(self, selector, other):
-        return BinaryOpBox(selector, other, self)
+        return BinopBox(selector, other, self)
 
     def _compose_narop(self, selector, *args):
-        return NAryOpBox(selector, self, *args)
+        return NaropBox(selector, self, *args)
 
 
-class UnaryOpBox(AbstractBox):
+class UnopBox(AbstractBox):
     def __init__(self, selector, a):
         super().__init__()
         self.selector = selector
@@ -670,7 +670,7 @@ class UnaryOpBox(AbstractBox):
         return self.selector(self.a())
 
 
-class BinaryOpBox(AbstractBox):
+class BinopBox(AbstractBox):
     def __init__(self, selector, a, b):
         super().__init__()
         self.selector = selector
@@ -693,7 +693,7 @@ class BinaryOpBox(AbstractBox):
         return self.selector(a, b)
 
 
-class NAryOpBox(AbstractBox):
+class NaropBox(AbstractBox):
     def __init__(self, selector, a, *args):
         super().__init__()
         self.selector = selector
