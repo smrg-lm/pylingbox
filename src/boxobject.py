@@ -3,6 +3,7 @@ from itertools import repeat
 
 from sc3.all import *  # *** BUG: No funciona si import sc3 no se inicializa.
 from sc3.base.functions import AbstractFunction
+import sc3.seq.stream as stm
 import sc3.seq._taskq as tsq
 import sc3.synth.node as nod
 import sc3.synth.server as srv
@@ -32,7 +33,8 @@ import sc3.synth.server as srv
 #   PERO ES ASIGNARLE DOS SIGNIFICADOS DISTINTOS A LO MISMO. ITER DEBERÍA
 #   RETORNAR LO QUE SE RETORNA CON PLAY, de alguna manera, el grafo ES o NO ES
 #   temporal. Pero también se podría hacer Trig(Seq([0.5, 0.3, 0.2], repeat))
-#   pero Trig pasa a ser objeto del grafo (PatchObject).
+#   pero Trig pasa a ser objeto del grafo (PatchObject). Iter igualmente puede
+#   devolver la ejecución de una rutina con tiempo lógico sin reloj.
 
 # Pensar estos elementos y las posibles estructuras de datos que se generan
 # en relación a Score.
@@ -278,12 +280,30 @@ class Patch():  # si distintos patch llaman tiran del árbol por medio de los ou
     def __init__(self):
         self._outlets = []
         self._cycle = 0
+        self._routine = None
 
     @property
     def outlets(self):
-        return self._outlets
+        return tuple(self._outlets)
 
-    def play(self):
+    def play(self, clock=None, quant=None):
+        if self._routine:
+            return
+        def patch_routine():
+            yield from self._gen_function()
+        self._routine = stm.Routine(patch_routine)
+        self._routine.play(clock, quant)
+        # *** TODO: La routina podría avisar cuando termina, o no.
+
+    def stop(self):
+        if self._routine:
+            self._routine.stop()
+            # self._routine = None  # Solo se ejecuta una vez.
+            # *** TODO: Clear resources if added.
+            # Buses tal vez, pero un patch puede correr en un grupo y liberar
+            # ese grupo para liberar todo, aunque Routine no se comporta así.
+
+    def _gen_function(self):
         # Evaluación ordenada de los triggers y los outlets.
         queue = tsq.TaskQueue()
         for out in self._outlets:
@@ -320,6 +340,57 @@ class Patch():  # si distintos patch llaman tiran del árbol por medio de los ou
                 # *** Hacer: cuando hay más de una salida y algunas terminan antes.
                 return
 
+
+class PatchFunction():
+    def __init__(self, func):
+        self.func = func
+
+    def __call__(self, *args, **kwargs):
+        try:
+            # TAL VEZ ACÁ DEBA DETECTAR SI ESTÁ DENTRO DE OTRO PATCH.
+            new_patch = Patch()
+            prev_patch = Patch.current_patch
+            Patch.current_patch = new_patch
+            self.func(*args, **kwargs)
+        finally:
+            Patch.current_patch = prev_patch
+        return new_patch
+
+
+# Decorator syntax.
+def patch(func):
+    return PatchFunction(func)
+
+
+''' TEST ACTUAL.
+from boxobject import *
+
+@patch
+def a():
+    freq = Seq([1, 2, 3, 4], Trig(3))
+    freq = Trace(freq)
+    Outlet(freq)
+
+@patch
+def b():
+    # Un Patch no es un PatchObject, para que se activen los trig
+    # hay que llamar a play que además devuelve un generator, out
+    # no tiene la lógica.
+    freq = Inlet(a.outlets[0])
+    freq = Trace(freq)
+    freq2 = Seq([10, 20, 30])
+    freq2 = Trace(freq2)  # trace no puede cambiar el tipo del objeto, necesita otro outlet, mal.
+    Outlet(freq, Trig(1))
+    Outlet(freq2, Trig(1))
+
+# Luego ver Seq([patch1, patch2])
+
+x = b.play()
+next(x)
+# next(x) ...
+'''
+
+
 '''
 @patch
 def test():
@@ -346,22 +417,6 @@ def r():
 
 r.play()
 '''
-
-
-def patch(func):
-    # *** Hay que pensar Patch como  una función generadora, tiene que crear
-    # *** nuevas instancias cada vez que se evalúa, no acá.
-    # SE PUEDE USAR CONTEXT MANAGER PARA EVITAR QUE CURRENT_PATCH QUEDE
-    # INCONSISTENTE SI FALLA LA EVALUACIÓN DE FUNC(). VER SYNTHDEF PERO
-    # CREO QUE TIENE TRY/EXCEPT.
-    try:
-        pch = Patch()
-        Patch.current_patch = pch
-        func()
-    except:
-        Patch.current_patch = None
-        raise
-    return pch
 
 
 class Trig():
@@ -578,25 +633,25 @@ def r():
 
 
 class Inlet(PatchObject):
-    def __init__(self, value):
+    def __init__(self, obj):
         super().__init__()
-        self._value = value
-        if isinstance(self._value, PatchObject):
-            value._add_root(self)
-            self._add_branch(value)
+        self._obj = obj
+        if isinstance(self._obj, PatchObject):
+            obj._add_root(self)
+            self._add_branch(obj)
 
     def __iter__(self):
-        if isinstance(self._value, PatchObject):
-            yield from self._value
+        if isinstance(self._obj, PatchObject):
+            yield from self._obj
         else:
             while True:
-                yield self._value
+                yield self._obj
 
     def __next__(self):
-        if isinstance(self._value, PatchObject):
-            return self._value()
+        if isinstance(self._obj, PatchObject):
+            return self._obj()
         else:
-            return self._value
+            return self._obj
 
 
 class Trace(PatchObject):
