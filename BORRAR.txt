@@ -1,3 +1,8 @@
+# *** REVISAR dos cosas, si la diferencia se puede calcular en
+# *** offset y si nrt clock de sc3 está calculando bien los offsets
+# *** al volver a encolar.
+
+
 # Ahora que pienso, puede que no sea bueno que sea un Operand, porque no
 # retiene las mismas instancias en la cadena al realizar ciertas operaciones.
 # Se tiene que mantener la instancia original y borrar si se borra el objeto,
