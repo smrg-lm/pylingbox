@@ -240,9 +240,9 @@ class Patch():  # si distintos patch llaman tiran del árbol por medio de los ou
     def _evaluate_oulets(self, evaluables):
         try:
             # Patch puede ser context.
-            new_patch = Patch()
+            curr_patch = self
             prev_patch = Patch.current_patch
-            Patch.current_patch = new_patch
+            Patch.current_patch = curr_patch
             for out in evaluables:
                 out()
         finally:
@@ -307,7 +307,7 @@ class BoxObject():
         self.__triggers = _UniqueList()
 
     def __iter__(self):
-        raise self
+        return self
 
     def __next__(self):
         raise NotImplementedError(f'{type(self).__name__}.__next__')
@@ -579,46 +579,10 @@ def test():
     b = Seq([10, 20, 30, 40], y)
     c = Value(100, z)
     r = a + b + c
-    Outlet(r)
+    Trace(r)
 
-outs = test._outlets
-g = outs[0].play()
+g = test()._gen_function()
 [x for x in g]
-'''
-
-'''
-@patch
-def test():
-    a = Seq([1, 2, 3])
-    b = Value(10)
-    c = Value(100)
-    r1 = a * b
-    r2 = a * b + c
-    d = Seq([1, 2, 3, 4])
-    r3 = d * 1000
-    x = Trig(1)
-    x.connect(a)
-    x.connect(d)
-    Outlet(r1)
-    Outlet(r2)
-    Outlet(r3)
-
-outs = test._outlets
-trig = outs[0]._get_triggers()[0]
-itrig = iter(trig)
-
-for i in range(3):
-    for o in outs:
-        print(o())
-    next(itrig)
-
-# outs[0]()  # StopIteration
-# outs[1]()  # StopIteration
-# outs[2]()  # 4000
-# trig._active  # True
-# next(itrig)  # 1
-# outs[2]()  # StopIteration
-# trig._active  # False
 '''
 
 
@@ -697,9 +661,8 @@ def test():
     note = Note(name=name, freq=freq, amp=amp)
     # Trig(3).connect(note)
 
-@routine.run()
-def r():
-    yield from test.play()
+p = test()
+p.play()
 '''
 
 
@@ -740,8 +703,9 @@ def b():
 
 pb = b()
 pb.play()
-# Se atoran los trig en pb, debería imprimir 4 con 20 y luego 30 pero imprime
-# solo 4 y luego 20 y 30 juntos. Solo con darle play anidado.
+# Hay el BUG de print en ipython, el timing de las rutinas no se altera
+# el problema es que retiene el la escritura a stdout (y luego tira
+# Exception None, además).
 '''
 
 
@@ -854,6 +818,21 @@ class If(AbstractBox):
             return self.fork[cond]
 
 
+'''
+@patch
+def test():
+    a = Seq([1, 2, 3, 4], trig=Trig(1))
+    b = Value(0)
+    c = a + b
+    i = If(c > 2, Value(True), Value(False))
+    Trace(i)
+
+g = test()._gen_function()
+next(g)
+...
+'''
+
+
 class Value(AbstractBox):
     def __init__(self, value, trig=None):
         super().__init__()
@@ -863,6 +842,20 @@ class Value(AbstractBox):
 
     def __next__(self):
         return self._value
+
+
+'''
+@patch
+def test():
+    a = Value(1)
+    b = Value(2)
+    c = a + b
+    Trace(c, trig=Trig(1))
+
+g = test()._gen_function()
+next(g)
+...
+'''
 
 
 class Seq(AbstractBox):
@@ -917,42 +910,6 @@ p = p1()
 p.play()
 '''
 
-'''
-# Grafo de iteradores con call/cache.
-a = Seq([1, 2, 3])
-b = Value(0)
-c = a + b
-o = Outlet(c)
-print(next(o))
-print(next(o))
-c._clear_cache()  # no reevalúa a y b
-print(next(o))
-print(next(o))
-b._clear_cache()  # no reevalúa a
-print(next(o))
-a._clear_cache()  # no reevalúa b
-print(next(o))
-a._clear_cache()
-print(next(o))
-# ...
-# StopIteration
-'''
-
-'''
-# Grafo de iterables (__iter__). Es UNA de las dos opciones, sin triggers.
-a = Seq([1, 2, 3])
-b = Value(0)
-c = a + b
-i = If(c > 2, Value(True), Value(False))
-o = Outlet(i)
-
-o = iter(o)
-print(next(o))
-print(next(o))
-print(next(o))
-# print(next(o))  # StopIteration
-'''
-
 
 class FunctionBox(AbstractBox):
     def __init__(self, func, *args, **kwargs):
@@ -970,31 +927,3 @@ class FunctionBox(AbstractBox):
             key: value() if isinstance(value, BoxObject) else value\
                  for key, value in self.kwargs.items()}
         return self.func(*args, **kwargs)
-
-'''
-a = Value(1)
-b = Value(2)
-c = a + b
-o = Outlet(c)
-
-r = iter(o)
-next(r)
-'''
-
-'''
-for obj in a, b, c, o:
-    print(hex(id(obj)), obj._outlets, obj._roots)
-'''
-
-'''
-a = Value(1)
-b = Value(0)
-c = a + b
-i = If(c > 2, Value(True), Value(False))
-o = Outlet(i)
-
-o = iter(o)
-print(next(o))
-b._value = 2
-print(next(o))
-'''
