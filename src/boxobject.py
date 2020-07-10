@@ -240,11 +240,17 @@ class Patch():  # si distintos patch llaman tiran del árbol por medio de los ou
     def _evaluate_oulets(self, evaluables):
         try:
             # Patch puede ser context.
+            exception = False
             curr_patch = self
             prev_patch = Patch.current_patch
             Patch.current_patch = curr_patch
             for out in evaluables:
-                out()
+                try:
+                    out()  # También tiene catch and raise interno...
+                except StopIteration:
+                    exception = True
+            if exception:
+                raise StopIteration
         finally:
             Patch.current_patch = prev_patch
 
@@ -695,8 +701,8 @@ def b():
     pa = a()
     pa.play()
 
-    # freq = Inlet(pa)
-    # Trace(freq, 'Inlet', Trig(1))
+    freq = Inlet(pa)
+    Trace(freq, 'Inlet', Trig(1))
 
     freq2 = Seq([10, 20, 30])
     Trace(freq2, 'Seq B', Trig(1))
