@@ -139,6 +139,7 @@ class Patch():
     current_patch = None
 
     def __init__(self):
+        self._outlet = None
         self._roots = _UniqueList()
         self._triggers = _UniqueList()
         self._beat = 0.0
@@ -147,10 +148,18 @@ class Patch():
         self._routine = None
 
     @property
+    def outlet(self):
+        return self._outlet
+
+    @outlet.setter
+    def outlet(self, value):
+        if self._outlet:
+            raise Exception('Patch can only have one Outlet object.')
+        self._outlet = value
+
+    @property
     def roots(self):
         return tuple(self._roots)
-
-    # return [out for out in self._roots if type(out) is Outlet]
 
     def play(self, clock=None, quant=None):
         if self._routine:
@@ -203,7 +212,12 @@ class Patch():
         self._init_queue()
 
         # Initial RootBox evaluation, self._cycle == 0.
-        self._evaluate_roots(self._roots)
+        # self._evaluate_roots(self._roots)
+        try:
+            self._evaluate_roots(self._roots)
+        except StopIteration:
+            if not any(r._active for r in self._roots):
+                return
 
         prev_beat = 0
 
@@ -261,7 +275,7 @@ class PatchFunction():
     def __init__(self, func):
         self.func = func
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args, play=True, **kwargs):
         try:
             # Patch puede ser context.
             new_patch = Patch()
@@ -270,6 +284,8 @@ class PatchFunction():
             self.func(*args, **kwargs)
         finally:
             Patch.current_patch = prev_patch
+        if play:
+            new_patch.play()
         return new_patch
 
 
@@ -345,13 +361,7 @@ class BoxObject():
                 ret = self._cache = next(self)
                 return ret
             else:
-                # return self._cache
-                # para patch anidados, *** VER ***
-                if self._cached:
-                    return self._cache
-                else:
-                    ret = self._cache = next(self)
-                    return ret
+                return self._cache
 
     @property
     def _patch(self):
@@ -389,10 +399,10 @@ class BoxObject():
     def _children(self):
         return self.__children
 
-    def _add_branch(self, value):
+    def _add_child(self, value):
         self.__children.append(value)
 
-    def _remove_branch(self, value):
+    def _remove_child(self, value):
         self.__children.remove(value)
 
     @property
@@ -428,29 +438,29 @@ class BoxObject():
     def _get_triggers(self):
         # Los triggers se buscan hacia las hojas.
         ret = _UniqueList()
-        for branch in self.__children:
-            ret.extend(branch._get_triggers())
+        for child in self.__children:
+            ret.extend(child._get_triggers())
         for trigger in self.__triggers:
             ret.append(trigger)
         return ret
 
     def _get_triggered_objects(self):
         ret = _UniqueList()
-        for branch in self.__children:
-            ret.extend(branch._get_triggered_objects())
+        for child in self.__children:
+            ret.extend(child._get_triggered_objects())
         if self.__triggers:
             ret.append(self)
         return ret
 
     def _dyn_add_parent(self, obj):
         self._add_parent(obj)
-        obj._add_branch(self)
+        obj._add_child(self)
         for trigger in self._triggers:
             obj._patch._add_trigger(trigger)
 
     def _dyn_remove_parent(self, obj):
         self._remove_parent(obj)
-        obj._remove_branch(self)
+        obj._remove_child(self)
         for trigger in self._triggers:
             obj._patch._remove_trigger(trigger)
 
@@ -459,7 +469,6 @@ class TriggerObject():
     '''
     Los triggers son iteradores que simplemente retornan una secuencia de floats
     como deltas. No son nodos porque son transversales, no son parte del grafo.
-    No necesita los atributos branches, triggers, y caché, y no son evaluables.
     '''
     def __init__(self):
         self._delta = None
@@ -561,7 +570,7 @@ class RootBox(BoxObject):
         if not isinstance(value, RootBox) and isinstance(value, BoxObject):
             value._add_root(self)
             value._add_parent(self)
-            self._add_branch(value)
+            self._add_child(value)
         else:
             raise ValueError(f'{value} is invalid RootBox input')
 
@@ -582,15 +591,19 @@ class RootBox(BoxObject):
 
 
 class Outlet(RootBox):
-    def __init__(self, graph, trig=None):
+    def __init__(self, value, trig=None):
         super().__init__()
-        self._graph = graph
-        self._add_input(graph)
+        self._patch.outlet = self
+        if isinstance(value, (list, tuple)):
+            self._value = ValueList(value)
+        else:
+            self._value = value
+        self._add_input(self._value)
         if trig:
             trig.connect(self)
 
     def _evaluate(self):
-        return self._graph()
+        return self._value()
 
 
 '''
@@ -607,6 +620,49 @@ def test():
 
 g = test()._gen_function()
 [x for x in g]
+'''
+
+
+class ValueList(BoxObject):
+    def __init__(self, lst):
+        super().__init__()
+        self._lst = []
+        self._len = len(lst)
+        for obj in lst:
+            obj._add_parent(self)
+            self._add_child(obj)
+            self._lst.append(obj)
+
+    def __next__(self):
+        ret = []
+        ended = 0
+        for value in self._lst:
+            try:
+                ret.append(value())
+            except StopIteration:
+                ret.append(None)
+                ended += 1
+        if ended == self._len:
+            raise StopIteration
+        return ret
+
+
+''' test actual
+from boxobject import *
+
+@patch
+def outlst():
+    a = Seq([1, 2, 3, 4], Trig(1))
+    b = Seq([10, 20, 30, 40], Trig(2))
+    c = Seq([100, 200, 300, 400], Trig(3))
+    Outlet([a, b, c])
+
+@patch
+def inlst():
+    lst = Inlet(outlst())  ## Pero no se puden separar.
+    Trace(lst, trig=Trig(3))
+
+inlst().play()
 '''
 
 
@@ -685,21 +741,19 @@ p.play()
 
 
 class Inlet(BoxObject):
-    def __init__(self, patch, index=0):
+    def __init__(self, patch):
         super().__init__()
         self._input_patch = patch
-        self._index = index
-        out = [out for out in patch.roots if type(out) is Outlet][index]  # isinstance(out, Outlet)
-        # self._input = out._graph
-        # self._input._add_parent(self)
-        # self._add_branch(self._input)
-        self._input = out
+        self._input = patch.outlet
 
     def __next__(self):
-        return self._input()
+        if self._input and self._input._active:
+            return self._input._cache
+        else:
+            raise StopIteration
 
 
-''' TEST ACTUAL.
+'''
 from boxobject import *
 
 @patch
@@ -728,7 +782,7 @@ pb.play()
 
 
 class Message(BoxObject):
-    # Tiene branches porque puede contener secuencias y next evalúa los
+    # Tiene children porque puede contener secuencias y next evalúa los
     # métodos de parent. connect/disconnect tal vez no sean necesarios.
     # Ver de qué otras maneras se pueden componer mensajes a partir de
     # secuencias y demás, tal vez simplemente dependa del objeto de destino
@@ -768,7 +822,7 @@ class UnopBox(AbstractBox):
         self.selector = selector
         self.a = a
         a._add_parent(self)
-        self._add_branch(a)
+        self._add_child(a)
 
     def __next__(self):
         return self.selector(self.a())
@@ -783,7 +837,7 @@ class BinopBox(AbstractBox):
         for obj in a, b:
             if isinstance(obj, BoxObject):
                 obj._add_parent(self)
-                self._add_branch(obj)
+                self._add_child(obj)
 
     def __next__(self):
         a = self.a() if isinstance(self.a, BoxObject) else self.a
@@ -798,11 +852,11 @@ class NaropBox(AbstractBox):
         self.a = a
         self.args = args
         a._add_parent(self)
-        self._add_branch(a)
+        self._add_child(a)
         for obj in args:
             if isinstance(obj, BoxObject):
                 obj._add_parent(self)
-                self._add_branch(obj)
+                self._add_child(obj)
 
     def __next__(self):
         args = [obj() if isinstance(obj, BoxObject)\
@@ -819,7 +873,7 @@ class If(AbstractBox):
         for obj in cond, true, false:  # *** el trigger del brazo inactivo va a seguir andando, no se si está bien o mal.
             if isinstance(obj, BoxObject):
                 obj._add_parent(self)
-                self._add_branch(obj)
+                self._add_child(obj)
 
     def _check_fork(self, *fork):
         for b in fork:
@@ -898,8 +952,7 @@ class Seq(AbstractBox):
                          yield obj()
                 except StopIteration:
                     pass
-                finally:
-                    obj._dyn_remove_parent(self)
+                obj._dyn_remove_parent(self)
             else:
                 yield obj
 
