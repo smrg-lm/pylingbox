@@ -596,8 +596,8 @@ class Outlet(RootBox):
         self._patch.outlet = self
         if isinstance(value, (list, tuple)):
             self._value = ValueList(value)
-        else:
-            self._value = value
+        elif not isinstance(value, ValueList):
+            self._value = ValueList([value])
         self._add_input(self._value)
         if trig:
             trig.connect(self)
@@ -605,22 +605,15 @@ class Outlet(RootBox):
     def _evaluate(self):
         return self._value()
 
+    def __getitem__(self, index):
+        return self._value[index]
 
-'''
-@patch
-def test():
-    x = Trig(1)
-    y = Trig(1)
-    z = Trig(3)
-    a = Seq([1, 2, 3], x)
-    b = Seq([10, 20, 30, 40], y)
-    c = Value(100, z)
-    r = a + b + c
-    Trace(r)
+    def __iter__(self):
+        # As iterable behaves different.
+        return iter(self._value)
 
-g = test()._gen_function()
-[x for x in g]
-'''
+    def __len__(self):
+        return len(self._value)
 
 
 class ValueList(BoxObject):
@@ -646,8 +639,18 @@ class ValueList(BoxObject):
             raise StopIteration
         return ret
 
+    def __getitem__(self, index):
+        return self._lst[index]
 
-''' test actual
+    def __iter__(self):
+        # As iterable behaves different.
+        return iter(self._lst)
+
+    def __len__(self):
+        return self._len
+
+
+'''
 from boxobject import *
 
 @patch
@@ -655,14 +658,33 @@ def outlst():
     a = Seq([1, 2, 3, 4], Trig(1))
     b = Seq([10, 20, 30, 40], Trig(2))
     c = Seq([100, 200, 300, 400], Trig(3))
-    Outlet([a, b, c])
+    o = Outlet([a, b, c])
+    # Trace(o[0])
+    # a, b, c = o
+    # Trace(ValueList([a, b, c]))
 
 @patch
 def inlst():
-    lst = Inlet(outlst())  ## Pero no se puden separar.
-    Trace(lst, trig=Trig(3))
+    # a = Inlet(outlst())
+    # Trace(a, trig=Trig(3))
 
-inlst().play()
+    # a = Inlet(outlst(), 0)
+    # Trace(a, trig=Trig(3))
+
+    # lst = Inlet(outlst(), slice(2))
+    # Trace(lst, trig=Trig(3))
+
+    # a = Inlet(outlst())[0]
+    # Trace(a, trig=Trig(3))
+
+    # a, b, c = Inlet(outlst())
+    # Trace(ValueList([a, b, c]), trig=Trig(3))
+
+    lst = Inlet(outlst())
+    Trace(ValueList([*lst]), trig=Trig(3))
+
+# outlst()
+inlst()
 '''
 
 
@@ -682,6 +704,19 @@ class Trace(RootBox):
             f'{hex(id(self._graph))}>, cycle: {self._patch._cycle}, '
             f'value: {value}')
         return value
+
+
+'''
+@patch
+def test():
+    a = Seq([1, 2, 3], Trig(1))
+    b = Seq([10, 20, 30, 40], Trig(1))
+    c = Value(100, Trig(3))
+    r = a + b + c
+    Trace(r)
+
+test()
+'''
 
 
 class Note(RootBox):
@@ -741,16 +776,27 @@ p.play()
 
 
 class Inlet(BoxObject):
-    def __init__(self, patch):
+    def __init__(self, patch, index=None):
         super().__init__()
         self._input_patch = patch
         self._input = patch.outlet
+        self._index = index if index is not None else slice(len(patch.outlet))
 
     def __next__(self):
         if self._input and self._input._active:
-            return self._input._cache
+            return self._input._cache[self._index]
         else:
             raise StopIteration
+
+    def __getitem__(self, index):
+        return type(self)(self._input_patch, index)
+
+    def __iter__(self):
+        # As iterable behaves different.
+        return (type(self)(self._input_patch, i) for i in range(len(self)))
+
+    def __len__(self):
+        return len(self._input)
 
 
 '''
