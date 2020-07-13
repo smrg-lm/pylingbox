@@ -1,5 +1,6 @@
 
 from itertools import repeat
+from collections import namedtuple
 
 from sc3.all import *  # *** BUG: No funciona si import sc3 no se inicializa.
 from sc3.base.functions import AbstractFunction
@@ -19,7 +20,7 @@ import sc3.synth.server as srv
 #   (isinstance(self.cond, BoxObject)), as_patchobject es la manera sc, hay otra
 #   manera funcional?
 # - Ver los play de synths.
-#   * Son Roots, pero hay que ver si pasan el valor, si actúan como salida o
+#   * Son roots, pero hay que ver si pasan el valor, si actúan como salida o
 #     subgrafo, si los objetos generados se pasan o almacenan en algún lado.
 #   * Hay que tener en cuenta el tipo de abstracción que se crea, si es que se
 #     basa en duración constante o instrucciones de ejecución, new, release,
@@ -36,10 +37,8 @@ import sc3.synth.server as srv
 
 # - Pensar simplemente como lenguaje para la secuenciación en vez de Pbind.
 # - Lo importante son los triggers con diferente tempo para las variables.
-# - Las Roots pueden ser genéricos o el equivalente a los streams de eventos
-#   (pbind), esta interfaz es más bien funcional en vez de declarativa.
 # - Las synthdef, como funciones que se llama, podrían ser outlets, distintos
-#   tipos de outlets podrían generar distintos timpos de streams de eventos
+#   tipos de roots podrían generar distintos timpos de streams de eventos
 #   que creen o no synths, como reemplazo de pbind/pmono/artic.
 # - Los valores de repetición de los patterns podrían depender de una variable
 #   de configuración que haga que sean infinitos o no (Pattern.repeat = True).
@@ -136,12 +135,14 @@ class _UniqueList(list):
 
 
 class Patch():
+    _Entry = namedtuple('_Entry', ['beat', 'next_beat', 'trig', 'roots'])
     current_patch = None
 
     def __init__(self):
         self._outlet = None
         self._roots = _UniqueList()
         self._triggers = _UniqueList()
+        self._messages = _UniqueList()
         self._beat = 0.0
         self._cycle = 0
         self._queue = None
@@ -184,13 +185,8 @@ class Patch():
         for root in self._roots:
             for trigger in root._get_triggers():
                 self._add_trigger(trigger)
-        # Acá está la cuestión, el grafo tiene que ser dinámico y se tienen
-        # que poder cambiar roots y agregar triggers al vuelo, es agregar
-        # nuevos objeto sal scheduler, manteniendo el orden con lo existente,
-        # el estado en un momento determinado, es otro tipo de scheduler
-        # distinto de tempoclock. El problema también es que los objetos
-        # se tienen que evaluar en un instante determinado y no todos al
-        # principio.
+            for message in root._get_messages():
+                self._add_message(message)
 
     def _add_trigger(self, trigger):
         if trigger in self._triggers and trigger._active:
@@ -208,52 +204,74 @@ class Patch():
             trigger._active = False  # lo anula en queue.
             self._triggers.remove(trigger)
 
+    def _add_message(self, message):
+        self._messages.append(message)
+        for trigger in message._triggers:
+            self._add_trigger(trigger)
+
+    def _remove_message(self, message):
+        self._messages.remove(message)
+        for trigger in message._triggers:
+            self._remove_trigger(trigger)
+
     def _gen_function(self):
         self._init_queue()
 
-        # Initial RootBox evaluation, self._cycle == 0.
-        # self._evaluate_roots(self._roots)
         try:
-            self._evaluate_roots(self._roots)
+            # Initial RootBox evaluation, self._cycle == 0.
+            # Messages are always evaluated before roots within a cycle.
+            self._evaluate_cycle(self._messages + self._roots)
         except StopIteration:
-            if not any(r._active for r in self._roots):
-                return
+            return
 
         prev_beat = 0
 
         while not self._queue.empty():
-            evaluables = set()
+            # Cycle data.
+
+            evaluables = []
             beat, (trigger, roots) = self._queue.pop()
-            self._beat = beat
 
             yield beat - prev_beat
+            self._beat = beat
             self._cycle += 1
 
-            if trigger._active and any(r._active for r in roots):
-                next_beat = next(trigger)  # Exception if not inf.
-                roots = tuple(set(r for r in roots if r._active))
-                evaluables.update(roots)
-                self._queue.add(beat + next_beat, (trigger, roots))  # Tiende a overflow y error por resolución.
+            # Triggers are evaluated first each cycle (after yield).
+            next_beat = next(trigger)  # Triggers are infinite.
+            evaluables.append(
+                self._Entry(beat, next_beat, trigger, set(roots)))
 
             while not self._queue.empty()\
             and round(beat, 9) == round(self._queue.peek()[0], 9):  # Sincroniza pero introduce un error diferente, hay que ver si converge para el delta de cada trigger.
                 trigger, roots = self._queue.pop()[1]
-
-                if trigger._active and any(r._active for r in roots):
-                    next_beat = next(trigger)  # Exception if not inf.
-                    roots = tuple(set(r for r in roots if r._active))
-                    evaluables.update(roots)
-                    self._queue.add(beat + next_beat, (trigger, roots))  # Tiende a overflow y error por resolución.
+                next_beat = next(trigger)
+                evaluables.append(
+                    self._Entry(beat, next_beat, trigger, set(roots)))
 
             prev_beat = beat
 
-            try:
-                self._evaluate_roots(evaluables)
-            except StopIteration:
-                if not any(r._active for r in self._roots):
-                    return
+            # Evaluation.
 
-    def _evaluate_roots(self, evaluables):
+            messages = []
+            rootboxes = []
+            for entry in evaluables:
+                messages.extend(
+                    r for r in entry.roots if isinstance(r, Message))
+                rootboxes.extend(
+                    r for r in entry.roots if isinstance(r, RootBox))
+
+            try:
+                self._evaluate_cycle(messages + rootboxes)
+            except StopIteration:
+                return
+
+            for entry in evaluables:
+                if entry.trig._active and any(r._active for r in entry.roots):
+                    newroots = tuple(set(r for r in entry.roots if r._active))
+                    self._queue.add(  # Tends to error/overflow by resolution.
+                        entry.beat + entry.next_beat, (entry.trig, newroots))
+
+    def _evaluate_cycle(self, evaluables):
         try:
             # Patch puede ser context.
             exception = False
@@ -262,11 +280,15 @@ class Patch():
             Patch.current_patch = curr_patch
             for out in evaluables:
                 try:
-                    out()  # También tiene catch and raise interno...
+                    if out._active:  # Messages deactivate RootBox in its last iteration that is one more for rootboxes.
+                        out()  # *** También tiene catch and raise interno...
+                    else:
+                        exception = True
                 except StopIteration:
                     exception = True
             if exception:
-                raise StopIteration
+                if not any(r._active for r in self._messages + self._roots):
+                    raise StopIteration
         finally:
             Patch.current_patch = prev_patch
 
@@ -307,12 +329,12 @@ def test():
     res2 = (1000 + seq1) + seq2 + seq3
 
     trig = Trig(1), Trig(1), Trig(3)
-    # trig[0].connect(seq1)
-    trig[1].connect(seq2)
-    trig[2].connect(seq3)
+    # trig[0]._connect(seq1)
+    trig[1]._connect(seq2)
+    trig[2]._connect(seq3)
 
-    Trace(res1)
-    Trace(res2)
+    Trace(res1, 'res1')
+    Trace(res2, 'res2')
 
 t = test()
 print([out for out in t.roots])
@@ -323,14 +345,19 @@ t.play()
 class BoxObject():
     class __NOCACHE(): pass
 
-    def __init__(self):
+    def __init__(self, tgg=None, msg=None):
         self.__patch = Patch.current_patch
         self.__prev_cycle = -1
         self.__cache = self.__NOCACHE
         self.__parents = _UniqueList()
         self.__children = _UniqueList()
         self.__roots = _UniqueList()
+        self.__messages = _UniqueList()
         self.__triggers = _UniqueList()
+        if tgg:
+            tgg._connect(self)
+        if msg:
+            msg._connect(self)
 
     def __iter__(self):
         return self
@@ -395,6 +422,22 @@ class BoxObject():
     def _remove_parent(self, value):
         self.__parents.remove(value)
 
+    def _dyn_add_parent(self, obj):
+        self._add_parent(obj)
+        obj._add_child(self)
+        for trigger in self._triggers:
+            obj._patch._add_trigger(trigger)
+        for message in self._messages:
+            obj._patch._add_message(message)
+
+    def _dyn_remove_parent(self, obj):
+        self._remove_parent(obj)
+        obj._remove_child(self)
+        for trigger in self._triggers:
+            obj._patch._remove_trigger(trigger)
+        for message in self._messages:
+            obj._patch._remove_message(message)
+
     @property
     def _children(self):
         return self.__children
@@ -417,6 +460,8 @@ class BoxObject():
         for r in self.__roots:
             # *** ESTO VA A BARAJAR EL ORDEN DE EJECUCIÓN DE LAS ROOTS PROPIOS.
             ret.append(r)
+        for m in self.__messages:
+            ret.append(m)
         return ret
 
     def _add_root(self, value):
@@ -440,8 +485,8 @@ class BoxObject():
         ret = _UniqueList()
         for child in self.__children:
             ret.extend(child._get_triggers())
-        for trigger in self.__triggers:
-            ret.append(trigger)
+        if self.__triggers:
+            ret.extend(self.__triggers)
         return ret
 
     def _get_triggered_objects(self):
@@ -450,19 +495,31 @@ class BoxObject():
             ret.extend(child._get_triggered_objects())
         if self.__triggers:
             ret.append(self)
+        for message in self.__messages:
+            if message._trigger:
+                ret.append(message)
         return ret
 
-    def _dyn_add_parent(self, obj):
-        self._add_parent(obj)
-        obj._add_child(self)
-        for trigger in self._triggers:
-            obj._patch._add_trigger(trigger)
+    @property
+    def _messages(self):
+        return self.__messages
 
-    def _dyn_remove_parent(self, obj):
-        self._remove_parent(obj)
-        obj._remove_child(self)
-        for trigger in self._triggers:
-            obj._patch._remove_trigger(trigger)
+    def _add_message(self, value):
+        self.__messages.append(value)
+
+    def _remove_message(self, value):
+        self.__messages.remove(value)
+
+    def _get_msg_recv(self):
+        return self
+
+    def _get_messages(self):
+        ret = _UniqueList()
+        for child in self.__children:
+            ret.extend(child._get_messages())
+        if self.__messages:
+            ret.extend(self.__messages)
+        return ret
 
 
 class TriggerObject():
@@ -483,12 +540,12 @@ class TriggerObject():
             obj._clear_cache()
         return self._delta
 
-    def connect(self, obj):
+    def _connect(self, obj):
         if not obj in self._objs:
             self._objs.append(obj)
             obj._add_trigger(self)
 
-    def disconnect(self, obj):
+    def _disconnect(self, obj):  # no se usa?
         if obj in self._objs:
             self._objs.remove(obj)
             obj._remove_trigger(self)
@@ -535,8 +592,8 @@ class Event(BoxObject):
         self._obj = obj
         self._wait = time > 0.0
         if self._wait:
-            self._trig = _EventDelta(time)
-            self._trig.connect(self)
+            self._trigger = _EventDelta(time)
+            self._trigger._connect(self)
 
     def __next__(self):
         if self._wait:
@@ -551,8 +608,8 @@ from boxobject import *
 
 @patch
 def p1():
-    a = Event(3, Seq([1, 2, 3, 4, 5], trig=Trig(2)))
-    Trace(a, trig=Trig(1))
+    a = Event(3, Seq([1, 2, 3, 4, 5], tgg=Trig(4)))
+    Trace(a, tgg=Trig(1))
 
 p = p1()
 p.play()
@@ -560,8 +617,8 @@ p.play()
 
 
 class RootBox(BoxObject):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, tgg=None, msg=None):
+        super().__init__(tgg, msg)
         self._active = True
         self._patch._roots.append(self)
         self._add_root(self)  # Needed for triggers.
@@ -582,25 +639,28 @@ class RootBox(BoxObject):
             return self._evaluate()
         except StopIteration:
             self._active = False
-            for obj in self._get_triggered_objects():
-                if not any(r._active for r in obj._roots):  # No active root for this obj.
-                    for t in obj._triggers:
-                        if not any(r._active for o in t._objs for r in o._roots):  # No active root for other trigger objs.
-                            t._active = False
+            # for obj in self._get_triggered_objects():
+            #     if not any(r._active for r in obj._roots):  # No active root for this obj.
+            #         for t in obj._triggers:
+            #             if not any(r._active for o in t._objs for r in o._roots):  # No active root for other trigger objs.
+            #                 t._active = False
+            # raise
+            for trigger in self._triggers:
+                # No other active root for the trigger(s) of this root.
+                if not any(r._active for o in trigger._objs for r in o._roots):
+                    trigger._active = False
             raise
 
 
 class Outlet(RootBox):
-    def __init__(self, value, trig=None):
-        super().__init__()
+    def __init__(self, value, tgg=None):
+        super().__init__(tgg)
         self._patch.outlet = self
         if isinstance(value, (list, tuple)):
             self._value = ValueList(value)
         elif not isinstance(value, ValueList):
             self._value = ValueList([value])
         self._add_input(self._value)
-        if trig:
-            trig.connect(self)
 
     def _evaluate(self):
         return self._value()
@@ -666,22 +726,22 @@ def outlst():
 @patch
 def inlst():
     # a = Inlet(outlst())
-    # Trace(a, trig=Trig(3))
+    # Trace(a, tgg=Trig(3))
 
     # a = Inlet(outlst(), 0)
-    # Trace(a, trig=Trig(3))
+    # Trace(a, tgg=Trig(3))
 
     # lst = Inlet(outlst(), slice(2))
-    # Trace(lst, trig=Trig(3))
+    # Trace(lst, tgg=Trig(3))
 
     # a = Inlet(outlst())[0]
-    # Trace(a, trig=Trig(3))
+    # Trace(a, tgg=Trig(3))
 
     # a, b, c = Inlet(outlst())
-    # Trace(ValueList([a, b, c]), trig=Trig(3))
+    # Trace(ValueList([a, b, c]), tgg=Trig(3))
 
     lst = Inlet(outlst())
-    Trace(ValueList([*lst]), trig=Trig(3))
+    Trace(ValueList([*lst]), tgg=Trig(3))
 
 # outlst()
 inlst()
@@ -689,13 +749,11 @@ inlst()
 
 
 class Trace(RootBox):
-    def __init__(self, graph, prefix=None, trig=None):
-        super().__init__()
+    def __init__(self, graph, prefix=None, tgg=None, msg=None):
+        super().__init__(tgg, msg)
         self._graph = graph
         self._prefix = prefix or 'Trace'
         self._add_input(graph)
-        if trig:
-            trig.connect(self)
 
     def _evaluate(self):
         value = self._graph()
@@ -722,7 +780,6 @@ test()
 class Note(RootBox):
     # noteEvent de sc Event.
 
-    # *** La palabra 'trig' la estoy usando acá y se usa en SynthDef, problema.
     # *** Considerar polirritmia lineal y real (melódica y armónica).
     # *** ¿Los trig se podrían componer como un solo generador (&, ||, ??)?
     # *** ¿Se podría escribir Note(dur=Every(0.5))?
@@ -764,11 +821,11 @@ def ping(freq=440, amp=0.1):
 
 @patch
 def test():
-    freq = Seq([440, 480, 540, 580] * 2, trig=Trig(1))
-    amp = Seq([0.01, 0.1] * 4)  #, trig=Trig(0.4))
+    freq = Seq([440, 480, 540, 580] * 2, tgg=Trig(1))
+    amp = Seq([0.01, 0.1] * 4)  #, tgg=Trig(0.4))
     name = Value('ping')
     note = Note(name=name, freq=freq, amp=amp)
-    # Trig(3).connect(note)
+    # Trig(3)._connect(note)
 
 p = test()
 p.play()
@@ -827,25 +884,137 @@ pb.play()
 '''
 
 
-class Message(BoxObject):
-    # Tiene children porque puede contener secuencias y next evalúa los
-    # métodos de parent. connect/disconnect tal vez no sean necesarios.
-    # Ver de qué otras maneras se pueden componer mensajes a partir de
-    # secuencias y demás, tal vez simplemente dependa del objeto de destino
-    # como venía pensando, pero ver bien.
-    # Los mensajes, y esto es lo importante, se pueden usar para cambiar el
-    # estado de otros objetos en el grafo, porque el grafo est estático en
-    # cierto sentido, necesita de nodos que generen las llamadas a los métodos
-    # como mensajes. Así todo queda contenido en el grafo.
-    def __init__(self, *msg):
-        super().__init__()
-        self.msg = msg
+class Box(BoxObject):  # Hasta ahora es value sin AbstractBox.
+    def __init__(self, obj, tgg=None, msg=None):
+        super().__init__(tgg, msg)
+        self._obj = obj
 
-    def connect(self, target):
-        self._add_parent(target)
+    def __next__(self):
+        return self._obj
 
-    def disconnect(self, target):
-        self._remove_parent(target)
+    def _get_msg_recv(self):
+        return self._obj
+
+
+class Message():
+    def __init__(self, lst, tgg, bang=True):
+        self._lst = lst
+        self._triggers = _UniqueList()
+        tgg._connect(self)
+        self._bang = bang
+
+        self._iter = iter(lst)
+        self._objs = []
+
+        self._active = True  # Evaluable junto con rootbox.
+
+    # - Opción 1: Que solo se evalúe cuando es trigueado. No se puede "tirar"
+    #   de los mensajes. Problema de la evaluación para distintos nodos.
+    # - Opción 2: Que genere un trigger en el objeto que recibe el mensaje,
+    #   limpia la caché. Esto es un poco más ambiüo, se podría requerir solo
+    #   la preparación de un estado llamando a un método. Flag bang.
+    # - Opción 3: En relación a las opciones 1 y 2, que esté fuera del árbol de
+    #   evaluación, no sería BoxObject y sería una especie de RootNode que se
+    #   evalúa antes que estos.
+    # - Ver de qué otras maneras se pueden componer mensajes a partir de
+    #   secuencias y demás.
+    # - Los mensajes, y esto es lo importante, se pueden usar para cambiar el
+    #   estado de otros objetos en el grafo, porque el grafo est estático en
+    #   cierto sentido, necesita de nodos que generen las llamadas a los métodos
+    #   como mensajes. Así todo queda contenido en el grafo.
+
+    @property
+    def _roots(self):
+        ret = _UniqueList()
+        for obj in self._objs:
+            ret.extend(obj._roots)
+        ret.append(self)
+        return ret
+
+    def __call__(self):
+        ...
+        return next(self)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        try:
+            next_msg = next(self._iter)
+            next_msg = self._parse(next_msg)
+            for obj in self._objs:
+                if self._bang:
+                    obj._clear_cache()
+                recv = obj._get_msg_recv()
+                getattr(recv, next_msg[0])(*next_msg[1:])  # *** AttributeError
+            return next_msg
+        except StopIteration:
+            self._active = False
+            for trigger in self._triggers:
+                # Disable the trigger if only connected to this message.
+                if len(trigger._objs) == 1:
+                    trigger._active = False
+                # Disable rootbox if only has this trigger.
+                for root in self._roots:
+                    if len(root._get_triggers()) < 2:
+                        root._active = False  # *** Le vuelve a poner false a self._active porque _roots siempre incluye self.
+            raise
+
+    def _parse(self, msg):
+        # ['selector 1 "2" 3', 'selector 3 2.1']
+        # [('selector', 1, '2', 3), ('selector', 3, 2.1)]
+        if isinstance(msg, str):
+            msg = msg.split()  # *** pueden quedar caracteres válidos que generan expresiones: "60," es una tupla, [1,2,3], etc.
+            for i, v in enumerate(msg[1:][:], 1):
+                msg[i] = eval(v, dict())  # *** NameError a log.
+        return msg
+
+    def _add_trigger(self, trigger):
+        self._triggers.append(trigger)
+
+    def _remove_trigger(self, trigger):
+        self._triggers.remove(trigger)
+
+    def _get_triggers(self):
+        # Los triggers se buscan hacia las hojas.
+        ret = _UniqueList()
+        for obj in self._objs:
+            ret.extend(obj._get_triggers())
+        if self._triggers:
+            ret.extend(self._triggers)
+        return ret
+
+    def _clear_cache(self):
+        ...
+
+    def _connect(self, obj):
+        if not obj in self._objs:
+            self._objs.append(obj)
+            obj._add_message(self)
+
+    def _disconnect(self, obj):  # no se usa?
+        if obj in self._objs:
+            self._objs.remove(obj)
+            obj._remove_message(self)
+
+
+'''
+from boxobject import *
+
+class FakeObject():
+    def on(self, note, vel=63):
+        print('note on!', note, vel)
+    def off(self, note, vel=63):
+        print('note off!', note, vel)
+
+@patch
+def test():
+    msg = Message(['on 60 16', 'on 72', 'off 60', 'off 72'], tgg=Trig(1))
+    box = Box(FakeObject(), msg=msg)  # Put it in a box.
+    Trace(box)  # Outlet(box)
+
+p = test()
+'''
 
 
 class AbstractBox(BoxObject, AbstractFunction):
@@ -939,7 +1108,7 @@ class If(AbstractBox):
 '''
 @patch
 def test():
-    a = Seq([1, 2, 3, 4], trig=Trig(1))
+    a = Seq([1, 2, 3, 4], tgg=Trig(1))
     b = Value(0)
     c = a + b
     i = If(c > 2, Value(True), Value(False))
@@ -951,11 +1120,9 @@ g = test()._gen_function()
 
 
 class Value(AbstractBox):
-    def __init__(self, value, trig=None):
-        super().__init__()
+    def __init__(self, value, tgg=None):
+        super().__init__(tgg)
         self._value = value
-        if trig:
-            trig.connect(self)
 
     def __next__(self):
         return self._value
@@ -967,7 +1134,7 @@ def test():
     a = Value(1)
     b = Value(2)
     c = a + b
-    Trace(c, trig=Trig(1))
+    Trace(c, tgg=Trig(1))
 
 g = test()._gen_function()
 for _ in range(10): next(g)
@@ -975,18 +1142,13 @@ for _ in range(10): next(g)
 
 
 class Seq(AbstractBox):
-    def __init__(self, lst, trig=None):
-        super().__init__()
+    def __init__(self, lst, tgg=None):
+        super().__init__(tgg)
         self._lst = lst
         self._len = len(lst)
         self.__iterator = self._seq_iterator()
-        if trig:
-            trig.connect(self)
 
     def _seq_iterator(self):
-        # Si fueran iterables en vez de iteradores la pertenecia al patch
-        # se puede crear cuando se crea el iterador (de manera diferida),
-        # además de poder embeber otros iterables.
         # Un iterador es un iterable que se retorna a si mismo con iter().
         # https://docs.python.org/3/glossary.html#term-iterator
         # https://docs.python.org/3/library/stdtypes.html#typeiter
@@ -1015,11 +1177,11 @@ from boxobject import *
 @patch
 def p1():
     a = Seq([
-        Seq([1, 2], trig=Trig(1)),
-        Seq([10, 20], trig=Trig(2)),
-        Seq([1000, 2000], trig=Trig(1))
-    ], trig=Trig(4))
-    Trace(a)  #, trig=Trig(1))
+        Seq([1, 2], tgg=Trig(1)),
+        Seq([10, 20], tgg=Trig(2)),
+        Seq([1000, 2000], tgg=Trig(1))
+    ], tgg=Trig(4))
+    Trace(a)  #, tgg=Trig(1))
 
 p = p1()
 p.play()
@@ -1027,8 +1189,8 @@ p.play()
 
 
 class FunctionBox(AbstractBox):
-    def __init__(self, func, *args, **kwargs):
-        super().__init__()
+    def __init__(self, func, *args, tgg=None, **kwargs):
+        super().__init__(tgg)
         self.func = func
         self.args = args
         self.kwargs = kwargs
