@@ -932,23 +932,8 @@ class Message():
     #   cierto sentido, necesita de nodos que generen las llamadas a los métodos
     #   como mensajes. Así todo queda contenido en el grafo.
 
-    @property
-    def _roots(self):
-        ret = _UniqueList()
-        for obj in self._objs:
-            ret.extend(obj._roots)
-        ret.append(self)
-        return ret
-
     def __iter__(self):
         return self
-
-    def _evaluate(self):
-        try:
-            return next(self)
-        except StopIteration:
-            self._deactivate()
-            raise
 
     def __next__(self):
         next_msg = next(self._iter)
@@ -959,6 +944,35 @@ class Message():
             recv = obj._get_msg_recv()
             getattr(recv, next_msg[0])(*next_msg[1:])  # *** AttributeError
         return next_msg
+
+    def _parse(self, msg):
+        # ['selector 1 "2" 3', 'selector 3 2.1']
+        # [('selector', 1, '2', 3), ('selector', 3, 2.1)]
+        if isinstance(msg, str):
+            msg = msg.split()  # *** pueden quedar caracteres válidos que generan expresiones: "60," es una tupla, [1,2,3], etc.
+            for i, v in enumerate(msg[1:][:], 1):
+                msg[i] = eval(v, dict())  # *** NameError a log.
+        return msg
+
+    def _connect(self, obj):
+        if not obj in self._objs:
+            self._objs.append(obj)
+            obj._add_message(self)
+
+    def _disconnect(self, obj):  # no se usa?
+        if obj in self._objs:
+            self._objs.remove(obj)
+            obj._remove_message(self)
+
+
+    # Needed by _evaluate_cycle.
+
+    def _evaluate(self):
+        try:
+            return next(self)
+        except StopIteration:
+            self._deactivate()
+            raise
 
     def _deactivate(self):
         self._active = False
@@ -972,14 +986,16 @@ class Message():
                 if len(root._get_triggers()) < 2:
                     root._active = False  # *** Le vuelve a poner false a self._active porque _roots siempre incluye self.
 
-    def _parse(self, msg):
-        # ['selector 1 "2" 3', 'selector 3 2.1']
-        # [('selector', 1, '2', 3), ('selector', 3, 2.1)]
-        if isinstance(msg, str):
-            msg = msg.split()  # *** pueden quedar caracteres válidos que generan expresiones: "60," es una tupla, [1,2,3], etc.
-            for i, v in enumerate(msg[1:][:], 1):
-                msg[i] = eval(v, dict())  # *** NameError a log.
-        return msg
+
+    # Needed by triggers interface.
+
+    @property
+    def _roots(self):
+        ret = _UniqueList()
+        for obj in self._objs:
+            ret.extend(obj._roots)
+        ret.append(self)
+        return ret
 
     def _add_trigger(self, trigger):
         self._triggers.append(trigger)
@@ -997,17 +1013,7 @@ class Message():
         return ret
 
     def _clear_cache(self):
-        ...
-
-    def _connect(self, obj):
-        if not obj in self._objs:
-            self._objs.append(obj)
-            obj._add_message(self)
-
-    def _disconnect(self, obj):  # no se usa?
-        if obj in self._objs:
-            self._objs.remove(obj)
-            obj._remove_message(self)
+        pass
 
 
 '''
