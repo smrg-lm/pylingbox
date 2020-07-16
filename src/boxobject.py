@@ -925,11 +925,11 @@ class Message():
     def __init__(self, lst, tgg, bang=True):
         self._active = True  # Evaluable junto con rootbox.
         self._lst = lst
-        self._iter = iter(lst)
-        self._objs = []
-        self._triggers = _UniqueList()
+        self.__iterator = iter(lst)
+        self.__triggers = _UniqueList()
         tgg._connect(self)
         self._bang = bang
+        self._objs = []
 
     # - Opción 1: Que solo se evalúe cuando es trigueado. No se puede "tirar"
     #   de los mensajes. Problema de la evaluación para distintos nodos.
@@ -950,7 +950,7 @@ class Message():
         return self
 
     def __next__(self):
-        next_msg = next(self._iter)
+        next_msg = next(self.__iterator)
         next_msg = self._parse(next_msg)
         for obj in self._objs:
             if self._bang:
@@ -990,12 +990,11 @@ class Message():
 
     def _deactivate(self):
         self._active = False
-        for trigger in self._triggers:
+        for trigger in self.__triggers:
             # Disable the trigger if only connected to this message.
             if len(trigger._objs) == 1:
                 trigger._active = False
             # Disable rootbox if only has this trigger.
-            # *** PEEERO, NO SE PODRÍA HACER UNA SALIDA CONSTANTE SIN TRIGGERS QUE GUARDE EL ÚLTIMO VALOR? Outlet(Value(123)) PERO EL GRAFO EN ALGUNA PARTE USA MSG.
             for root in trigger._get_active_roots():
                 if len(root._get_triggers()) < 2:
                     root._active = False
@@ -1004,10 +1003,11 @@ class Message():
     # Needed by triggers interface.
 
     def _add_trigger(self, trigger):
-        self._triggers.append(trigger)
+        self.__triggers.append(trigger)
 
     def _remove_trigger(self, trigger):
-        self._triggers.remove(trigger)
+        self.__triggers.remove(trigger)
+
 
     def _clear_cache(self):
         pass
