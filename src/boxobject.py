@@ -799,6 +799,8 @@ class Trace(RootBox):
 
 
 '''
+from boxobject import *
+
 @patch
 def test():
     a = Seq([1, 2, 3], Trig(1))
@@ -843,6 +845,8 @@ class Note(RootBox):
         return synth
 
 '''
+from boxobject import *
+
 s.boot()
 
 @synthdef
@@ -1132,6 +1136,8 @@ class If(AbstractBox):
 
 
 '''
+from boxobject import *
+
 @patch
 def test():
     a = Seq([1, 2, 3, 4], tgg=Trig(1))
@@ -1140,7 +1146,7 @@ def test():
     i = If(c > 2, Value(True), Value(False))
     Trace(i)
 
-g = test()._gen_function()
+g = test(play=False)._gen_function()
 [value for value in g]
 '''
 
@@ -1155,6 +1161,8 @@ class Value(AbstractBox):
 
 
 '''
+from boxobject import *
+
 @patch
 def test():
     a = Value(1)
@@ -1162,7 +1170,7 @@ def test():
     c = a + b
     Trace(c, tgg=Trig(1))
 
-g = test()._gen_function()
+g = test(play=False)._gen_function()
 for _ in range(10): next(g)
 '''
 
