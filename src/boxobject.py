@@ -326,16 +326,11 @@ from boxobject import *
 @patch
 def test():
     seq1 = Seq([1, 2, 3])
-    seq2 = Seq([10, 20, 30, 40])
-    seq3 = Seq([100, 200, 300, 400])
+    seq2 = Seq([10, 20, 30, 40], tgg=Trig(1))
+    seq3 = Seq([100, 200, 300, 400], tgg=Trig(3))
 
     res1 = seq1 + seq2
     res2 = (1000 + seq1) + seq2 + seq3
-
-    trig = Trig(1), Trig(1), Trig(3)
-    # trig[0]._connect(seq1)
-    trig[1]._connect(seq2)
-    trig[2]._connect(seq3)
 
     Trace(res1, 'res1')
     Trace(res2, 'res2')
@@ -859,7 +854,6 @@ def test():
     # Trig(3)._connect(note)
 
 p = test()
-p.play()
 '''
 
 
