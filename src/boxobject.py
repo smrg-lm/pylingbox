@@ -1,8 +1,32 @@
+"""
+The content of this file is highly experimental.
+
+A Patch is a language-side control graph as a possible replacement for
+SuperCollider's event streams. It organize patterns and actions scheduling
+played by Routine as a synchronous graph that resembles synth graphs.
+
+Objects, operands and operations, within a patch form a graph that is evaluated
+cyclically by triggers.
+
+The main difference with event streams is that any object can be triggered
+separately and thus have its own time function. Triggers can be combined to
+create superimposed functions in time, e.g. each pattern can have its own
+timing and target the same output object.
+
+It's inspired by the patterns library of SuperCollider and Max/PD control flow.
+However, its implementation differs from them and it creates its own set of
+rules and behaviour, it's a different mix.
+
+Sequential programming was preferred to simplify side-effect actions such as
+resource instantiation and cleanup.
+"""
+
 
 from itertools import repeat
 from collections import namedtuple
 
 from sc3.all import *  # *** BUG: No funciona si import sc3 no se inicializa.
+
 from sc3.base.functions import AbstractFunction
 import sc3.seq.stream as stm
 import sc3.seq._taskq as tsq
