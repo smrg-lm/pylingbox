@@ -135,7 +135,8 @@ class _UniqueList(list):
 
 
 class Patch():
-    _Entry = namedtuple('_Entry', ['beat', 'next_beat', 'trig', 'roots'])
+    _Entry = namedtuple(
+        '_Entry', ['beat', 'next_beat', 'trig', 'messages', 'roots'])
     current_patch = None
 
     def __init__(self):
@@ -193,14 +194,16 @@ class Patch():
             return
         trigger._active = True
         self._triggers.append(trigger)
-        roots = tuple(
-            set(r for o in trigger._objs for r in o._roots if r._active))
-        self._queue.add(self._beat + float(trigger._delta), (trigger, roots))
+        messages = trigger._get_active_messages()
+        roots = trigger._get_active_roots()
+        self._queue.add(
+            self._beat + float(trigger._delta), (trigger, messages, roots))
 
     def _remove_trigger(self, trigger):
         if trigger not in self._triggers:
             return
-        if not any(r._active for o in trigger._objs for r in o._roots):
+        if not trigger._get_active_messages()\
+        or not trigger._get_active_roots():
             trigger._active = False  # lo anula en queue.
             self._triggers.remove(trigger)
 
@@ -230,7 +233,7 @@ class Patch():
             # Cycle data.
 
             evaluables = []
-            beat, (trigger, roots) = self._queue.pop()
+            beat, (trigger, messages, roots) = self._queue.pop()
 
             yield beat - prev_beat
             self._beat = beat
@@ -238,38 +241,39 @@ class Patch():
 
             # Triggers are evaluated first each cycle (after yield).
             next_beat = next(trigger)  # Triggers are infinite.
-            evaluables.append(
-                self._Entry(beat, next_beat, trigger, set(roots)))
+            evaluables.append(self._Entry(
+                beat, next_beat, trigger, set(messages), set(roots)))
 
             while not self._queue.empty()\
             and round(beat, 9) == round(self._queue.peek()[0], 9):  # Sincroniza pero introduce un error diferente, hay que ver si converge para el delta de cada trigger.
-                trigger, roots = self._queue.pop()[1]
+                trigger, messages, roots = self._queue.pop()[1]
                 next_beat = next(trigger)
-                evaluables.append(
-                    self._Entry(beat, next_beat, trigger, set(roots)))
+                evaluables.append(self._Entry(
+                    beat, next_beat, trigger, set(messages), set(roots)))
 
             prev_beat = beat
 
             # Evaluation.
 
             messages = []
-            rootboxes = []
+            roots = []
             for entry in evaluables:
-                messages.extend(
-                    r for r in entry.roots if isinstance(r, Message))
-                rootboxes.extend(
-                    r for r in entry.roots if isinstance(r, RootBox))
+                messages.extend(entry.messages)
+                roots.extend(entry.roots)
 
             try:
-                self._evaluate_cycle(messages + rootboxes)
+                self._evaluate_cycle(messages + roots)
             except StopIteration:
                 return
 
             for entry in evaluables:
-                if entry.trig._active and any(r._active for r in entry.roots):
+                if entry.trig._active\
+                and any(r._active for r in entry.messages | entry.roots):
+                    newmessages = tuple(m for m in entry.messages if m._active)
                     newroots = tuple(set(r for r in entry.roots if r._active))
                     self._queue.add(  # Tends to error/overflow by resolution.
-                        entry.beat + entry.next_beat, (entry.trig, newroots))
+                        entry.beat + entry.next_beat,
+                        (entry.trig, newmessages, newroots))
 
     def _evaluate_cycle(self, evaluables):
         try:
@@ -477,8 +481,6 @@ class BoxObject():
         for r in self.__roots:
             # *** ESTO VA A BARAJAR EL ORDEN DE EJECUCIÓN DE LAS ROOTS PROPIOS.
             ret.append(r)
-        for m in self.__messages:
-            ret.append(m)
         return ret
 
     def _add_root(self, value):
@@ -566,6 +568,24 @@ class TriggerObject():
         if obj in self._objs:
             self._objs.remove(obj)
             obj._remove_trigger(self)
+
+    @property
+    def _boxes(self):
+        return [o for o in self._objs if isinstance(o, BoxObject)]
+
+    @property
+    def _messages(self):
+        return [o for o in self._objs if isinstance(o, Message)]
+
+    def _get_active_roots(self):
+        roots = set(r for b in self._boxes for r in b._roots if r._active)
+        roots |= set(
+            r for m in self._messages for o in m._objs\
+            for r in o._roots if r._active)
+        return tuple(roots)
+
+    def _get_active_messages(self):
+        return tuple(m for m in self._messages if m._active)
 
 
 class Trig(TriggerObject):
@@ -980,37 +1000,20 @@ class Message():
             # Disable the trigger if only connected to this message.
             if len(trigger._objs) == 1:
                 trigger._active = False
-        # Disable rootbox if only has this trigger.
-        # *** PEEERO, NO SE PODRÍA HACER UNA SALIDA CONSTANTE SIN TRIGGERS QUE GUARDE EL ÚLTIMO VALOR? Outlet(Value(123)) PERO EL GRAFO EN ALGUNA PARTE USA MSG.
-        for root in self._roots:
-            if len(root._get_triggers()) < 2:
-                root._active = False  # *** Le vuelve a poner false a self._active porque _roots siempre incluye self.
+            # Disable rootbox if only has this trigger.
+            # *** PEEERO, NO SE PODRÍA HACER UNA SALIDA CONSTANTE SIN TRIGGERS QUE GUARDE EL ÚLTIMO VALOR? Outlet(Value(123)) PERO EL GRAFO EN ALGUNA PARTE USA MSG.
+            for root in trigger._get_active_roots():
+                if len(root._get_triggers()) < 2:
+                    root._active = False
 
 
     # Needed by triggers interface.
-
-    @property
-    def _roots(self):
-        ret = _UniqueList()
-        for obj in self._objs:
-            ret.extend(obj._roots)
-        ret.append(self)
-        return ret
 
     def _add_trigger(self, trigger):
         self._triggers.append(trigger)
 
     def _remove_trigger(self, trigger):
         self._triggers.remove(trigger)
-
-    def _get_triggers(self):
-        # Los triggers se buscan hacia las hojas.
-        ret = _UniqueList()
-        for obj in self._objs:
-            ret.extend(obj._get_triggers())
-        if self._triggers:
-            ret.extend(self._triggers)
-        return ret
 
     def _clear_cache(self):
         pass
