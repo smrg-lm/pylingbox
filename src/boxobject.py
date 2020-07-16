@@ -980,11 +980,11 @@ class Message():
             # Disable the trigger if only connected to this message.
             if len(trigger._objs) == 1:
                 trigger._active = False
-            # Disable rootbox if only has this trigger.
-            # *** PEEERO, NO SE PODRÍA HACER UNA SALIDA CONSTANTE SIN TRIGGERS QUE GUARDE EL ÚLTIMO VALOR? Outlet(Value(123)) PERO EL GRAFO EN ALGUNA PARTE USA MSG.
-            for root in self._roots:
-                if len(root._get_triggers()) < 2:
-                    root._active = False  # *** Le vuelve a poner false a self._active porque _roots siempre incluye self.
+        # Disable rootbox if only has this trigger.
+        # *** PEEERO, NO SE PODRÍA HACER UNA SALIDA CONSTANTE SIN TRIGGERS QUE GUARDE EL ÚLTIMO VALOR? Outlet(Value(123)) PERO EL GRAFO EN ALGUNA PARTE USA MSG.
+        for root in self._roots:
+            if len(root._get_triggers()) < 2:
+                root._active = False  # *** Le vuelve a poner false a self._active porque _roots siempre incluye self.
 
 
     # Needed by triggers interface.
