@@ -190,6 +190,7 @@ class Patch():
                 self._add_message(message)
 
     def _add_trigger(self, trigger):
+        # Method used for _dyn_add_parent too.
         if trigger in self._triggers and trigger._active:
             return
         trigger._active = True
@@ -200,6 +201,7 @@ class Patch():
             self._beat + float(trigger._delta), (trigger, messages, roots))
 
     def _remove_trigger(self, trigger):
+        # Method used for _dyn_add_parent too.
         if trigger not in self._triggers:
             return
         if not trigger._get_active_messages()\
@@ -209,11 +211,13 @@ class Patch():
 
     def _add_message(self, message):
         self._messages.append(message)
+        # Needed for _dyn_add_parent.
         for trigger in message._triggers:
             self._add_trigger(trigger)
 
     def _remove_message(self, message):
         self._messages.remove(message)
+        # Needed for _dyn_add_parent.
         for trigger in message._triggers:
             self._remove_trigger(trigger)
 
@@ -399,12 +403,10 @@ class BoxObject():
             raise
 
     def _deactivate(self):
-        # By default deactivate all roots,
-        # override for special cases.
-        self._active = False
-        for root in self._roots:
-            if root._active:
-                root._active = False
+        # StopIteration deactivates parent in series.
+        # Exceptions are managed in __next__.
+        if self._active:
+            self._active = False
 
     @property
     def _patch(self):
@@ -499,6 +501,8 @@ class BoxObject():
         ret = _UniqueList()
         for child in self.__children:
             ret.extend(child._get_triggers())
+        for message in self.__messages:
+            ret.extend(message._triggers)
         if self.__triggers:
             ret.extend(self.__triggers)
         return ret
@@ -737,6 +741,10 @@ class ValueList(BoxObject):
 
 
 '''
+# - Tengo que cambiar la implementación, que cada outlet sea independiente y
+#   si se usan todos juntos funciona como ahora (corta el primero que termina),
+#   pero que esto sea explícito al crear las inlets (ahí se ponene en ValueList,
+#   si se obtienen por separado no y cada una termina cuando termina).
 from boxobject import *
 
 @patch
@@ -1002,12 +1010,15 @@ class Message():
 
     # Needed by triggers interface.
 
+    @property
+    def _triggers(self):
+        return self.__triggers
+
     def _add_trigger(self, trigger):
         self.__triggers.append(trigger)
 
     def _remove_trigger(self, trigger):
         self.__triggers.remove(trigger)
-
 
     def _clear_cache(self):
         pass
