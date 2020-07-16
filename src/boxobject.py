@@ -281,7 +281,7 @@ class Patch():
             for out in evaluables:
                 try:
                     if out._active:  # Messages deactivate RootBox in its last iteration that is one more for rootboxes.
-                        out()  # *** También tiene catch and raise interno...
+                        out._evaluate()  # *** También tiene catch and raise interno...
                     else:
                         exception = True
                 except StopIteration:
@@ -346,6 +346,7 @@ class BoxObject():
     class __NOCACHE(): pass
 
     def __init__(self, tgg=None, msg=None):
+        self._active = True
         self.__patch = Patch.current_patch
         self.__prev_cycle = -1
         self.__cache = self.__NOCACHE
@@ -365,7 +366,7 @@ class BoxObject():
     def __next__(self):
         raise NotImplementedError(f'{type(self).__name__}.__next__')
 
-    def __call__(self):
+    def _evaluate(self):
         # Patch is a generator function that creates an timed generator
         # iterator. BoxObjects are evaluated by cycle. A cycle is started
         # by any Trig contained in the Patch. BoxObject with triggers
@@ -376,19 +377,35 @@ class BoxObject():
         # of more than other BoxObject with different Trigs it will be
         # consumed by the triggers of every shared expression, a copy whould
         # be needed to avoid this. Is it too much compliated?
-        if self.__triggers:
-            if self._cached:
-                return self._cache
+
+        if not self._active:
+            raise StopIteration
+
+        try:
+            if self.__triggers:
+                if self._cached:
+                    return self._cache
+                else:
+                    ret = self._cache = next(self)
+                    return ret
             else:
-                ret = self._cache = next(self)
-                return ret
-        else:
-            if self._patch._cycle > self.__prev_cycle:
-                self.__prev_cycle = self._patch._cycle
-                ret = self._cache = next(self)
-                return ret
-            else:
-                return self._cache
+                if self._patch._cycle > self.__prev_cycle:
+                    self.__prev_cycle = self._patch._cycle
+                    ret = self._cache = next(self)
+                    return ret
+                else:
+                    return self._cache
+        except StopIteration:
+            self._deactivate()
+            raise
+
+    def _deactivate(self):
+        # By default deactivate all roots,
+        # override for special cases.
+        self._active = False
+        for root in self._roots:
+            if root._active:
+                root._active = False
 
     @property
     def _patch(self):
@@ -600,7 +617,7 @@ class Event(BoxObject):
             self._wait = False
             return
         self._obj._dyn_add_parent(self)
-        return self._obj()
+        return self._obj._evaluate()
 
 
 '''
@@ -619,7 +636,6 @@ p.play()
 class RootBox(BoxObject):
     def __init__(self, tgg=None, msg=None):
         super().__init__(tgg, msg)
-        self._active = True
         self._patch._roots.append(self)
         self._add_root(self)  # Needed for triggers.
 
@@ -631,25 +647,20 @@ class RootBox(BoxObject):
         else:
             raise ValueError(f'{value} is invalid RootBox input')
 
-    def _evaluate(self):
-        raise NotImplementedError()
-
-    def __next__(self):
-        try:
-            return self._evaluate()
-        except StopIteration:
-            self._active = False
-            # for obj in self._get_triggered_objects():
-            #     if not any(r._active for r in obj._roots):  # No active root for this obj.
-            #         for t in obj._triggers:
-            #             if not any(r._active for o in t._objs for r in o._roots):  # No active root for other trigger objs.
-            #                 t._active = False
-            # raise
-            for trigger in self._triggers:
-                # No other active root for the trigger(s) of this root.
-                if not any(r._active for o in trigger._objs for r in o._roots):
-                    trigger._active = False
-            raise
+    # def _deactivate(self):
+        # except StopIteration:
+        #     self._active = False
+        #     # for obj in self._get_triggered_objects():
+        #     #     if not any(r._active for r in obj._roots):  # No active root for this obj.
+        #     #         for t in obj._triggers:
+        #     #             if not any(r._active for o in t._objs for r in o._roots):  # No active root for other trigger objs.
+        #     #                 t._active = False
+        #     # raise
+        #     for trigger in self._triggers:
+        #         # No other active root for the trigger(s) of this root.
+        #         if not any(r._active for o in trigger._objs for r in o._roots):
+        #             trigger._active = False
+        #     raise
 
 
 class Outlet(RootBox):
@@ -662,8 +673,8 @@ class Outlet(RootBox):
             self._value = ValueList([value])
         self._add_input(self._value)
 
-    def _evaluate(self):
-        return self._value()
+    def __next__(self):
+        return self._value._evaluate()
 
     def __getitem__(self, index):
         return self._value[index]
@@ -691,7 +702,7 @@ class ValueList(BoxObject):
         ended = 0
         for value in self._lst:
             try:
-                ret.append(value())
+                ret.append(value._evaluate())
             except StopIteration:
                 ret.append(None)
                 ended += 1
@@ -755,8 +766,8 @@ class Trace(RootBox):
         self._prefix = prefix or 'Trace'
         self._add_input(graph)
 
-    def _evaluate(self):
-        value = self._graph()
+    def __next__(self):
+        value = self._graph._evaluate()
         print(
             f'{self._prefix}: <{type(self._graph).__name__}, '
             f'{hex(id(self._graph))}>, cycle: {self._patch._cycle}, '
@@ -794,9 +805,9 @@ class Note(RootBox):
             self._add_input(v)
             self._params[k] = v
 
-    def _evaluate(self):
+    def __next__(self):
         ...  # bundle
-        params = {k: v() for k, v in self._params.items()}
+        params = {k: v._evaluate() for k, v in self._params.items()}
         def_name = params.pop('name', 'default')
         target = params.pop('target', None)
         add_action = params.pop('add_action', 'addToHead')
@@ -898,15 +909,13 @@ class Box(BoxObject):  # Hasta ahora es value sin AbstractBox.
 
 class Message():
     def __init__(self, lst, tgg, bang=True):
+        self._active = True  # Evaluable junto con rootbox.
         self._lst = lst
+        self._iter = iter(lst)
+        self._objs = []
         self._triggers = _UniqueList()
         tgg._connect(self)
         self._bang = bang
-
-        self._iter = iter(lst)
-        self._objs = []
-
-        self._active = True  # Evaluable junto con rootbox.
 
     # - Opción 1: Que solo se evalúe cuando es trigueado. No se puede "tirar"
     #   de los mensajes. Problema de la evaluación para distintos nodos.
@@ -931,34 +940,37 @@ class Message():
         ret.append(self)
         return ret
 
-    def __call__(self):
-        ...
-        return next(self)
-
     def __iter__(self):
         return self
 
-    def __next__(self):
+    def _evaluate(self):
         try:
-            next_msg = next(self._iter)
-            next_msg = self._parse(next_msg)
-            for obj in self._objs:
-                if self._bang:
-                    obj._clear_cache()
-                recv = obj._get_msg_recv()
-                getattr(recv, next_msg[0])(*next_msg[1:])  # *** AttributeError
-            return next_msg
+            return next(self)
         except StopIteration:
-            self._active = False
-            for trigger in self._triggers:
-                # Disable the trigger if only connected to this message.
-                if len(trigger._objs) == 1:
-                    trigger._active = False
-                # Disable rootbox if only has this trigger.
-                for root in self._roots:
-                    if len(root._get_triggers()) < 2:
-                        root._active = False  # *** Le vuelve a poner false a self._active porque _roots siempre incluye self.
+            self._deactivate()
             raise
+
+    def __next__(self):
+        next_msg = next(self._iter)
+        next_msg = self._parse(next_msg)
+        for obj in self._objs:
+            if self._bang:
+                obj._clear_cache()
+            recv = obj._get_msg_recv()
+            getattr(recv, next_msg[0])(*next_msg[1:])  # *** AttributeError
+        return next_msg
+
+    def _deactivate(self):
+        self._active = False
+        for trigger in self._triggers:
+            # Disable the trigger if only connected to this message.
+            if len(trigger._objs) == 1:
+                trigger._active = False
+            # Disable rootbox if only has this trigger.
+            # *** PEEERO, NO SE PODRÍA HACER UNA SALIDA CONSTANTE SIN TRIGGERS QUE GUARDE EL ÚLTIMO VALOR? Outlet(Value(123)) PERO EL GRAFO EN ALGUNA PARTE USA MSG.
+            for root in self._roots:
+                if len(root._get_triggers()) < 2:
+                    root._active = False  # *** Le vuelve a poner false a self._active porque _roots siempre incluye self.
 
     def _parse(self, msg):
         # ['selector 1 "2" 3', 'selector 3 2.1']
@@ -1055,8 +1067,8 @@ class BinopBox(AbstractBox):
                 self._add_child(obj)
 
     def __next__(self):
-        a = self.a() if isinstance(self.a, BoxObject) else self.a
-        b = self.b() if isinstance(self.b, BoxObject) else self.b
+        a = self.a._evaluate() if isinstance(self.a, BoxObject) else self.a
+        b = self.b._evaluate() if isinstance(self.b, BoxObject) else self.b
         return self.selector(a, b)
 
 
@@ -1074,7 +1086,7 @@ class NaropBox(AbstractBox):
                 self._add_child(obj)
 
     def __next__(self):
-        args = [obj() if isinstance(obj, BoxObject)\
+        args = [obj._evaluate() if isinstance(obj, BoxObject)\
                 else obj for obj in self.args]
         return self.selector(self.a(), *args)
 
@@ -1096,11 +1108,11 @@ class If(AbstractBox):
                 raise ValueError("true/false expressions can't contain roots")
 
     def __next__(self):
-        cond = self.cond() if isinstance(self.cond, BoxObject)\
+        cond = self.cond._evaluate() if isinstance(self.cond, BoxObject)\
                else self.cond
         cond = int(not cond)
         if isinstance(self.fork[cond], BoxObject):
-            return self.fork[cond]()
+            return self.fork[cond]._evaluate()
         else:
             return self.fork[cond]
 
@@ -1157,7 +1169,7 @@ class Seq(AbstractBox):
                 try:
                     obj._dyn_add_parent(self)
                     while True:
-                         yield obj()
+                         yield obj._evaluate()
                 except StopIteration:
                     pass
                 obj._dyn_remove_parent(self)
@@ -1199,8 +1211,9 @@ class FunctionBox(AbstractBox):
                 obj._add_parent(self)
 
     def __next__(self):
-        args = [x() if isinstance(x, BoxObject) else x for x in self.args]
+        args = [
+            x._evaluate() if isinstance(x, BoxObject) else x for x in self.args]
         kwargs = {
-            key: value() if isinstance(value, BoxObject) else value\
+            key: value._evaluate() if isinstance(value, BoxObject) else value\
                  for key, value in self.kwargs.items()}
         return self.func(*args, **kwargs)
