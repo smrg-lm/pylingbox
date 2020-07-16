@@ -283,14 +283,14 @@ class Patch():
 
             # Evaluation.
 
-            messages = []
-            roots = []
+            messages = set()
+            roots = set()
             for entry in evaluables:
-                messages.extend(entry.messages)
-                roots.extend(entry.roots)
+                messages.update(entry.messages)
+                roots.update(entry.roots)
 
             try:
-                self._evaluate_cycle(messages + roots)
+                self._evaluate_cycle(messages | roots)
             except StopIteration:
                 return
 
@@ -298,7 +298,7 @@ class Patch():
                 if entry.trig._active\
                 and any(r._active for r in entry.messages | entry.roots):
                     newmessages = tuple(m for m in entry.messages if m._active)
-                    newroots = tuple(set(r for r in entry.roots if r._active))
+                    newroots = tuple(r for r in entry.roots if r._active)
                     self._queue.add(  # Tends to error/overflow by resolution.
                         entry.beat + entry.next_beat,
                         (entry.trig, newmessages, newroots))
@@ -495,12 +495,9 @@ class BoxObject():
         # Las salidas se buscan hacia la raíz.
         ret = _UniqueList()
         for p in self._parents:
-            # *** ESTO VA A DEFINIR EL ORDEN DE EJECUCIÓN DE LAS ROOTS.
-            # *** VA CAMBIAR SEGÚN QUE NODO LLAME ESTA PROPIEDAD.
             for r in p._roots:
                 ret.append(r)
         for r in self.__roots:
-            # *** ESTO VA A BARAJAR EL ORDEN DE EJECUCIÓN DE LAS ROOTS PROPIOS.
             ret.append(r)
         return ret
 
@@ -691,19 +688,13 @@ class RootBox(BoxObject):
             raise ValueError(f'{value} is invalid RootBox input')
 
     # def _deactivate(self):
-        # except StopIteration:
-        #     self._active = False
-        #     # for obj in self._get_triggered_objects():
-        #     #     if not any(r._active for r in obj._roots):  # No active root for this obj.
-        #     #         for t in obj._triggers:
-        #     #             if not any(r._active for o in t._objs for r in o._roots):  # No active root for other trigger objs.
-        #     #                 t._active = False
-        #     # raise
-        #     for trigger in self._triggers:
-        #         # No other active root for the trigger(s) of this root.
-        #         if not any(r._active for o in trigger._objs for r in o._roots):
-        #             trigger._active = False
-        #     raise
+    #     # Creo que es redundante porque luego de _evaluate_cycle comprueba
+    #     # no solo que el trigger esté activo sino que tenga roots activas.
+    #     self._active = False
+    #     for trigger in self._triggers:
+    #         # No other active root for this root's trigger.
+    #         if not any(r._active for o in trigger._objs for r in o._roots):
+    #             trigger._active = False
 
 
 class Outlet(RootBox):
