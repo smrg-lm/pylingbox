@@ -320,7 +320,6 @@ class Patch():
         while not self._neatq.empty():
             delay, neatobj = self._neatq.pop()
             yield delay - prev_delay
-            print(delay, prev_delay)
             try:
                 prev_patch = Patch.current_patch
                 Patch.current_patch = self
@@ -1155,6 +1154,32 @@ def test():
 p = test()
 '''
 
+'''
+from boxobject import *
+
+s.boot()
+
+@synthdef
+def ping(freq=440, amp=0.05):
+    sig = SinOsc(freq) * amp
+    env = EnvGen.kr(Env.perc(0.2), done_action=Done.FREE_SELF)
+    Out(0, (sig * env).dup())
+
+@patch
+def test():
+    group = Group()
+    freq = Seq([60, 62, 64] * 20, tgg=Trig(5)).midicps()
+    scale = Seq([1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7] * 40, tgg=Trig(7.1))
+    Note(name=Value('ping'), freq=freq * scale, target=Value(group))
+
+    @cleanup(delay=2)
+    def tidyner():
+        print('free group')
+        group.free()
+
+# p = test()
+'''
+
 
 class AbstractBox(BoxObject, AbstractFunction):
     def _compose_unop(self, selector):
@@ -1179,7 +1204,7 @@ class UnopBox(AbstractBox):
         self._add_child(a)
 
     def __next__(self):
-        return self.selector(self.a())
+        return self.selector(self.a._evaluate())
 
 
 class BinopBox(AbstractBox):
