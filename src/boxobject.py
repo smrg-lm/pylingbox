@@ -168,10 +168,13 @@ class Patch():
         self._roots = _UniqueList()
         self._triggers = _UniqueList()
         self._messages = _UniqueList()
+        self._cleaners = _UniqueList()
         self._beat = 0.0
         self._cycle = 0
         self._queue = None
+        self._neatq = None
         self._routine = None
+        self.__stop = False
 
     @property
     def outlet(self):
@@ -198,11 +201,9 @@ class Patch():
 
     def stop(self):
         if self._routine:
-            self._routine.stop()
-            # self._routine = None  # Solo se ejecuta una vez.
-            # *** TODO: Clear resources if added.
-            # Buses tal vez, pero un patch puede correr en un grupo y liberar
-            # ese grupo para liberar todo, aunque Routine no se comporta así.
+            # self._routine.stop()
+            self.__stop = True  # *** Ver cómo se lleva con CmdPeriod.
+            self._routine = None  # Solo se ejecuta una vez.
 
     def _init_queue(self):
         # Evaluación ordenada de los triggers y las roots.
@@ -212,6 +213,10 @@ class Patch():
                 self._add_trigger(trigger)
             for message in root._get_messages():
                 self._add_message(message)
+
+        self._neatq = tsq.TaskQueue()
+        for neatobj in self._cleaners:
+            self._neatq.add(neatobj.delay, neatobj)
 
     def _add_trigger(self, trigger):
         # Method used for _dyn_add_parent too.
@@ -264,6 +269,8 @@ class Patch():
             beat, (trigger, messages, roots) = self._queue.pop()
 
             yield beat - prev_beat
+            if self.__stop:
+                break
             self._beat = beat
             self._cycle += 1
 
@@ -279,8 +286,6 @@ class Patch():
                 evaluables.append(self._Entry(
                     beat, next_beat, trigger, set(messages), set(roots)))
 
-            prev_beat = beat
-
             # Evaluation.
 
             messages = set()
@@ -292,7 +297,7 @@ class Patch():
             try:
                 self._evaluate_cycle(messages | roots)
             except StopIteration:
-                return
+                break
 
             for entry in evaluables:
                 if entry.trig._active\
@@ -303,13 +308,33 @@ class Patch():
                         entry.beat + entry.next_beat,
                         (entry.trig, newmessages, newroots))
 
+            prev_beat = beat
+
+        # Cleanup
+
+        # concatenate with last beat delta.
+        prev_delay = beat - prev_beat
+        if prev_delay > self._neatq.peek()[0]:
+            prev_delay = self._neatq.peek()[0]
+
+        while not self._neatq.empty():
+            delay, neatobj = self._neatq.pop()
+            yield delay - prev_delay
+            print(delay, prev_delay)
+            try:
+                prev_patch = Patch.current_patch
+                Patch.current_patch = self
+                neatobj._evaluate()
+            finally:
+                Patch.current_patch = prev_patch
+            prev_delay = delay
+
     def _evaluate_cycle(self, evaluables):
         try:
             # Patch puede ser context.
             exception = False
-            curr_patch = self
             prev_patch = Patch.current_patch
-            Patch.current_patch = curr_patch
+            Patch.current_patch = self
             for out in evaluables:
                 try:
                     if out._active:  # Messages deactivate RootBox in its last iteration that is one more for rootboxes.
@@ -618,11 +643,6 @@ class Trig(TriggerObject):
 # Tempo se puede usar como el tempo de las unidades del patch.
 # Metro tal vez se puede usar en vez de Trig? No sé.
 # Las notaciones R[], Rtm[], etc., pueden crear triggers.
-
-
-# class Cleanup() como resource manager.
-# g = Group()
-# Cleanup(g, delay=2)
 
 
 # No perder de vista de que las clases expresan las acciones de manera
@@ -1057,6 +1077,80 @@ def test():
     msg = Message(['on 60 16', 'on 72', 'off 60', 'off 72'], tgg=Trig(1))
     box = Box(FakeObject(), msg=msg)  # Put it in a box.
     Trace(box)  # Outlet(box)
+
+p = test()
+'''
+
+
+class Tidyner():
+    def __init__(self):
+        self.__patch = Patch.current_patch
+        self.__patch._cleaners.append(self)
+
+    @property
+    def _patch(self):
+        return self.__patch
+
+
+class Cleanup(Tidyner):
+    def __init__(self, lst, method=None, delay=None):
+        super().__init__()
+        method = method or 'free'
+        delay = 1.0 if delay is None else delay
+        self.lst = []
+        for item in lst:
+            if isinstance(item, tuple):
+                self.lst.append(item)  # (obj, 'method', arg1, arg2, ...)
+            else:
+                self.lst.append((item, method))  # (obj, method)
+        self.method = method
+        self.delay = delay
+
+    def _evaluate(self):
+        for obj, method, *args in self.lst:
+            try:
+                getattr(obj, method)(*args)
+            except:
+                ... # _log
+
+
+class CleanupFunction(Tidyner):
+    def __init__(self, func, args=None, delay=None):
+        super().__init__()
+        self.func = func
+        self.args = () if args is None else args
+        self.delay = 1.0 if delay is None else delay
+
+    def _evaluate(self):
+        try:
+            self.func(*self.args)
+        except:
+            ... # _log
+
+
+# Decorator syntax.
+def cleanup(func=None, *, args=(), delay=None):
+    if func is None and delay is not None:
+        def _(func):
+            return CleanupFunction(func, args, delay)
+        return _
+    else:
+        return CleanupFunction(func)
+
+
+'''
+from boxobject import *
+
+@patch
+def test():
+    Trace(Seq([1, 2, 3]), tgg=Trig(1))
+
+    Cleanup([('hola', 'split', 'o')], delay=2)
+    Cleanup([('hola', 'split', 'o')], delay=1)
+
+    @cleanup(delay=1.5)
+    def tidyner():
+        print('neat!')
 
 p = test()
 '''
