@@ -260,6 +260,7 @@ class Patch():
         except StopIteration:
             return
 
+        beat = 0
         prev_beat = 0
 
         while not self._queue.empty():
@@ -311,6 +312,9 @@ class Patch():
             prev_beat = beat
 
         # Cleanup
+
+        if self._neatq.empty():
+            return
 
         # concatenate with last beat delta.
         prev_delay = beat - prev_beat
