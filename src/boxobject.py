@@ -22,12 +22,13 @@ resource instantiation and cleanup.
 """
 
 
-from itertools import repeat
+from itertools import cycle, repeat, chain
 from collections import namedtuple
 
 from sc3.all import *  # *** BUG: No funciona si import sc3 no se inicializa.
 
 from sc3.base.functions import AbstractFunction
+import sc3.seq.clock as clk
 import sc3.seq.stream as stm
 import sc3.seq._taskq as tsq
 import sc3.synth.node as nod
@@ -68,82 +69,6 @@ import sc3.synth.server as srv
 #   de configuración que haga que sean infinitos o no (Pattern.repeat = True).
 
 
-# # Para triggers:
-# class TrigFunction(ABC):
-#     @abstractmethod
-#     def _iter_map(self):
-#         pass
-#
-#     def _iter_value(self):
-#         while True:  # *** BoxObject lo tiene que interrumpir.
-#             self._obj._clear_cache()
-#             yield self._delta
-#
-#     def __iter__(self):
-#         if isinstance(self._obj, TrigFunction):
-#             return self._iter_map()
-#         else:
-#             return self._iter_value()
-#
-#     def __len__(self):
-#         return len(self._obj)
-#
-#
-# class Within(TrigFunction):
-#     def __init__(self, time, obj):
-#         self._unit = time
-#         self._delta = time / len(obj)  # *** FALTA EL CASO EVERY.
-#         self._obj = obj
-#
-#     def _iter_map(self):
-#         # Within comprime o expande temporalmente la salida de every.
-#         # n every d within t (cambia la proporción, nada más). Es recursiva.
-#         for delta in iter(self._obj):
-#             scale = self._unit / self._obj._unit
-#             print(delta, scale, self._unit, self._obj._unit)
-#             yield delta * scale
-#
-#
-# class Every(TrigFunction):
-#     def __init__(self, time, obj):
-#         self._unit = time * len(obj)  # *** FALTA EL CASO WITHIN.
-#         self._delta = time
-#         self._obj = obj
-#
-#     def _iter_map(self):
-#         # every es resampleo/decimación de la salida de within,
-#         # son algoritmos de resampling para arriba o abajo pero lazy.
-#         # n within t every d.
-#         new_delta = self._delta
-#         new_count = 0
-#         old_count = 0
-#         for delta in iter(self._obj):
-#             old_delta = delta
-#             if new_count >= old_count + old_delta:
-#                 old_count += old_delta
-#                 continue
-#             if old_delta <= new_delta:
-#                 yield new_delta
-#                 new_count += new_delta
-#                 old_count += old_delta
-#             else:
-#                 old_count += old_delta
-#                 while new_count < old_count\
-#                 and new_count < self._obj._unit - new_delta:
-#                     yield new_delta
-#                     new_count += new_delta
-#
-# '''
-# s = Seq([1, 2, 3])
-# x = Within(1, s)
-# x = Every(0.1, x)
-# # x = Within(3, x)  # llama, pero no está bien el tiempo
-# x = iter(x)
-# print(next(x), s())
-# # se cuelga en el último por el continue de iter_map (caso 1 w y 1 e).
-# '''
-
-
 class _UniqueList(list):
     def append(self, item):
         if item not in self:
@@ -175,6 +100,7 @@ class Patch():
         self._neatq = None
         self._routine = None
         self.__stop = False
+        self._tempo_scale = 1.0
 
     @property
     def outlet(self):
@@ -196,7 +122,7 @@ class Patch():
         def patch_routine():
             yield from self._gen_function()
         self._routine = stm.Routine(patch_routine)
-        self._routine.play(clock, quant)
+        self._routine.play(clock or clk.SystemClock, quant)  # SystemClock ignores quant.
         # *** TODO: La routina podría avisar cuando termina, o no.
 
     def stop(self):
@@ -227,7 +153,7 @@ class Patch():
         messages = trigger._get_active_messages()
         roots = trigger._get_active_roots()
         self._queue.add(
-            self._beat + float(trigger._delta), (trigger, messages, roots))
+            self._beat + next(trigger), (trigger, messages, roots))
 
     def _remove_trigger(self, trigger):
         # Method used for _dyn_add_parent too.
@@ -269,7 +195,7 @@ class Patch():
             evaluables = []
             beat, (trigger, messages, roots) = self._queue.pop()
 
-            yield beat - prev_beat
+            yield (beat - prev_beat) * self._tempo_scale
             if self.__stop:
                 break
             self._beat = beat
@@ -323,7 +249,7 @@ class Patch():
 
         while not self._neatq.empty():
             delay, neatobj = self._neatq.pop()
-            yield delay - prev_delay
+            yield (delay - prev_delay) * self._tempo_scale
             try:
                 prev_patch = Patch.current_patch
                 Patch.current_patch = self
@@ -595,7 +521,7 @@ class TriggerObject():
     como deltas. No son nodos porque son transversales, no son parte del grafo.
     '''
     def __init__(self):
-        self._delta = None
+        self._iterator = None
         self._objs = []
         self._active = True
 
@@ -605,7 +531,7 @@ class TriggerObject():
     def __next__(self):
         for obj in self._objs:
             obj._clear_cache()
-        return self._delta
+        return next(self._iterator)
 
     def _connect(self, obj):
         if not obj in self._objs:
@@ -637,9 +563,39 @@ class TriggerObject():
 
 
 class Trig(TriggerObject):
-    def __init__(self, freq):
+    def __init__(self, hz=1):
         super().__init__()
-        self._delta = 1.0 / freq
+        self._iterator = repeat(1.0 / hz)
+
+
+class Every(TriggerObject):
+    def __init__(self, time=1):
+        super().__init__()
+        if isinstance(time, (list, tuple)):
+            self._iterator = cycle(time)
+        else:
+            self._iterator = repeat(time)
+
+
+class Within(TriggerObject):
+    def __init__(self, time=1, n=1):
+        super().__init__()
+        if isinstance(n, (list, tuple)):
+            self._iterator = cycle(chain(*[[time / i] * i for i in n]))
+        else:
+            self._iterator = repeat(time / n)
+
+
+'''
+from boxobject import *
+
+@patch
+def test():
+    seq = Seq(range(20), Within(1, [4, 3, 2, 1]))
+    Trace(seq)
+
+p = test()
+'''
 
 
 # Tempo, Bpm, Metro (todas refieren a unidad metronómica en bpm o freq).
@@ -657,7 +613,7 @@ class Trig(TriggerObject):
 class _EventDelta(TriggerObject):
     def __init__(self, time):
         super().__init__()
-        self._delta = float(time)
+        self._delta = time
 
     def __next__(self):
         for obj in self._objs:
@@ -848,6 +804,33 @@ def test():
     Trace(r)
 
 test()
+'''
+
+
+class Tempo(RootBox):
+    def __init__(self, bpm, tgg=None, msg=None):
+        super().__init__(tgg, msg)
+        self._bpm = bpm
+        self._hz = bpm / 60
+        self._add_input(self._hz)
+
+    def __next__(self):
+        value = self._hz._evaluate()
+        self._patch._tempo_scale = 1.0 / value
+        return value
+
+
+'''
+from boxobject import *
+
+@patch
+def test():
+    Tempo(Seq([60, 120, 60, 120, 60]), Every(4))
+    # Tempo(Seq([60, 120] * 3), Every([4, 3]))
+    seq1 = Seq(range(20))
+    Trace(seq1, tgg=Trig(1))
+
+p = test()
 '''
 
 
@@ -1286,6 +1269,20 @@ def test():
 
 g = test(play=False)._gen_function()
 [value for value in g]
+'''
+
+'''
+from boxobject import *
+
+@patch
+def test():
+    seq1 = Seq(range(20), tgg=Trig(4))
+    seq2 = Seq(range(0, 100, 10), tgg=Trig(4))
+    seq3 = Seq(range(0, 1000, 100), tgg=Trig(4))
+    res = If(seq1 % 2, seq3, seq2)
+    Trace(res)
+
+p = test()
 '''
 
 
