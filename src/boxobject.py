@@ -27,7 +27,7 @@ from collections import namedtuple
 
 from sc3.all import *  # *** BUG: No funciona si import sc3 no se inicializa.
 
-from sc3.base.functions import AbstractFunction
+import sc3.base.functions as fn
 import sc3.seq.clock as clk
 import sc3.seq.stream as stm
 import sc3.seq._taskq as tsq
@@ -591,7 +591,7 @@ from boxobject import *
 
 @patch
 def test():
-    seq = Seq(range(20), Within(1, [4, 3, 2, 1]))
+    seq = Seq(range(20), tgg=Within(1, [4, 3, 2, 1]))
     Trace(seq)
 
 p = test()
@@ -743,9 +743,9 @@ from boxobject import *
 
 @patch
 def outlst():
-    a = Seq([1, 2, 3, 4], Trig(1))
-    b = Seq([10, 20, 30, 40], Trig(2))
-    c = Seq([100, 200, 300, 400], Trig(3))
+    a = Seq([1, 2, 3, 4], tgg=Trig(1))
+    b = Seq([10, 20, 30, 40], tgg=Trig(2))
+    c = Seq([100, 200, 300, 400], tgg=Trig(3))
     o = Outlet([a, b, c])
     # Trace(o[0])
     # a, b, c = o
@@ -797,8 +797,8 @@ from boxobject import *
 
 @patch
 def test():
-    a = Seq([1, 2, 3], Trig(1))
-    b = Seq([10, 20, 30, 40], Trig(1))
+    a = Seq([1, 2, 3], tgg=Trig(1))
+    b = Seq([10, 20, 30, 40], tgg=Trig(1))
     c = Value(100, Trig(3))
     r = a + b + c
     Trace(r)
@@ -825,8 +825,8 @@ from boxobject import *
 
 @patch
 def test():
-    Tempo(Seq([60, 120, 60, 120, 60]), Every(4))
-    # Tempo(Seq([60, 120] * 3), Every([4, 3]))
+    Tempo(Seq([60, 120, 60, 120, 60]), tgg=Every(4))
+    # Tempo(Seq([60, 120] * 3), tgg=Every([4, 3]))
     seq1 = Seq(range(20))
     Trace(seq1, tgg=Trig(1))
 
@@ -864,6 +864,7 @@ class Note(RootBox):
         ... # bundle
         ... # send
         return synth
+
 
 '''
 from boxobject import *
@@ -919,7 +920,7 @@ from boxobject import *
 
 @patch
 def a():
-    freq = Seq([1, 2, 3, 4], Trig(3))
+    freq = Seq([1, 2, 3, 4], tgg=Trig(3))
     Trace(freq, 'Seq A')
     Outlet(freq)
 
@@ -1167,8 +1168,29 @@ def test():
 # p = test()
 '''
 
+'''
+from boxobject import *
 
-class AbstractBox(BoxObject, AbstractFunction):
+s.boot()
+
+@synthdef
+def ping(freq=440, amp=0.05):
+    sig = SinOsc(freq) * amp
+    env = EnvGen.kr(Env.perc(), done_action=Done.FREE_SELF)
+    Out(0, (sig * env).dup())
+
+@patch
+def test():
+    g = Group()
+    h = Group(g, add_action='addAfter')
+    seq = Seq([0, 2, 4, 5, 7, 9, 11], repeat=100, tgg=Every(1))
+    target = If(seq < 5, Value(g), Value(h))
+    Note(name=Value('ping'), freq=bi.midicps(seq + 60), target=target)
+    Cleanup([g, h])
+'''
+
+
+class AbstractBox(BoxObject, fn.AbstractFunction):
     def _compose_unop(self, selector):
         return UnopBox(selector, self)
 
@@ -1311,27 +1333,29 @@ for _ in range(10): next(g)
 
 
 class Seq(AbstractBox):
-    def __init__(self, lst, tgg=None):
+    def __init__(self, lst, repeat=1, tgg=None):
         super().__init__(tgg)
         self._lst = lst
         self._len = len(lst)
         self.__iterator = self._seq_iterator()
+        self._repeat = repeat
 
     def _seq_iterator(self):
         # Un iterador es un iterable que se retorna a si mismo con iter().
         # https://docs.python.org/3/glossary.html#term-iterator
         # https://docs.python.org/3/library/stdtypes.html#typeiter
-        for obj in self._lst:
-            if isinstance(obj, BoxObject):
-                try:
-                    obj._dyn_add_parent(self)
-                    while True:
-                         yield obj._evaluate()
-                except StopIteration:
-                    pass
-                obj._dyn_remove_parent(self)
-            else:
-                yield obj
+        for _ in range(self._repeat):
+            for obj in self._lst:
+                if isinstance(obj, BoxObject):
+                    try:
+                        obj._dyn_add_parent(self)
+                        while True:
+                             yield obj._evaluate()
+                    except StopIteration:
+                        pass
+                    obj._dyn_remove_parent(self)
+                else:
+                    yield obj
 
     def __next__(self):
         return next(self.__iterator)
