@@ -297,3 +297,46 @@ Instrument('cello', msgs)
 # vitual se puede poner como plugin de un trac midi que genera los sonidos
 # en base a los eventos/mensajes. Un Track también puede ser la realización
 # de las señales de control (automatizaciones).
+
+# Tempo, Bpm, Metro (todas refieren a unidad metronómica en bpm o freq).
+# Tempo se puede usar como el tempo de las unidades del patch.
+# Metro tal vez se puede usar en vez de Trig? No sé.
+# Las notaciones R[], Rtm[], etc., pueden crear triggers.
+
+# No perder de vista de que las clases expresan las acciones de manera
+# similar a las expresiones de dibujo. Y que representan funciones temporales.
+# Ver de qué manera se pueden envolver recursos externos creando clases
+# BoxObject (API) o envolviendo como FunctionBox. Se integran con la temporalidad.
+
+# https://stackoverflow.com/questions/26927571/multiple-inheritance-in-python3-with-different-signatures
+# https://stackoverflow.com/questions/45581901/are-sets-ordered-like-dicts-in-python3-6
+
+# Hay tres tipos de objetos Box, Trigger y Patch.
+
+# - Nombrar los un/bin/narops aunque sea an __str__
+# - Ver cómo se pueden simplificar todas las comprobaciones de tipo BoxObject
+#   (isinstance(self.cond, BoxObject)), as_patchobject es la manera sc, hay otra
+#   manera funcional?
+# - Ver los play de synths.
+#   * Son roots, pero hay que ver si pasan el valor, si actúan como salida o
+#     subgrafo, si los objetos generados se pasan o almacenan en algún lado.
+#   * Hay que tener en cuenta el tipo de abstracción que se crea, si es que se
+#     basa en duración constante o instrucciones de ejecución, new, release,
+#     la lógica es distinta para duración absoluta o sustain (noteoff/release).
+#   * Cuándo el generador es como mono, monoartc o pbind.
+#     Cuándo la instrucción que se genera es n_new o n_set, en general.
+#     Para algunas cosas se pueden usars grupos como target, scsynth propaga.
+# ¿Cuáles son las diferencias entre un grafo de síntesis y un grafo de patcheo?
+# Además de que el patcheo está basado en 'eventos' pero se define como flujo
+# de eventos, como si fueran señales.
+
+# Pensar estos elementos y las posibles estructuras de datos que se generan
+# en relación a Score.
+
+# - Pensar simplemente como lenguaje para la secuenciación en vez de Pbind.
+# - Lo importante son los triggers con diferente tempo para las variables.
+# - Las synthdef, como funciones que se llama, podrían ser outlets, distintos
+#   tipos de roots podrían generar distintos timpos de streams de eventos
+#   que creen o no synths, como reemplazo de pbind/pmono/artic.
+# - Los valores de repetición de los patterns podrían depender de una variable
+#   de configuración que haga que sean infinitos o no (Pattern.repeat = True).
